@@ -2,6 +2,7 @@
 //! No Tauri dependency — the UI talks to it through the app crate.
 
 pub mod error;
+pub mod naming;
 pub mod select;
 pub mod types;
 pub mod ytdlp;
