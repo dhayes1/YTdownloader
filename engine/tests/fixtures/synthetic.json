@@ -1,0 +1,14 @@
+{"title":"Synthetic Video","duration":754.0,"thumbnail":"https://i.ytimg.com/vi/x/maxresdefault.jpg","formats":[
+{"format_id":"sb0","protocol":"mhtml","ext":"mhtml","vcodec":"none","acodec":"none","url":"https://x/sb"},
+{"format_id":"139","protocol":"https","ext":"m4a","vcodec":"none","acodec":"mp4a.40.5","filesize":1000000,"url":"https://x/139","http_headers":{"User-Agent":"UA"}},
+{"format_id":"140","protocol":"https","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2","filesize":4000000,"url":"https://x/140","http_headers":{"User-Agent":"UA"}},
+{"format_id":"251","protocol":"https","ext":"webm","vcodec":"none","acodec":"opus","filesize":4200000,"url":"https://x/251","http_headers":{"User-Agent":"UA"}},
+{"format_id":"18","protocol":"https","ext":"mp4","vcodec":"avc1.42001E","acodec":"mp4a.40.2","height":360,"fps":30,"url":"https://x/18"},
+{"format_id":"136","protocol":"https","ext":"mp4","vcodec":"avc1.4d401f","acodec":"none","height":720,"fps":30,"filesize":20000000,"url":"https://x/136"},
+{"format_id":"247","protocol":"https","ext":"webm","vcodec":"vp9","acodec":"none","height":720,"fps":30,"filesize":18000000,"url":"https://x/247"},
+{"format_id":"298","protocol":"https","ext":"mp4","vcodec":"avc1.4d4020","acodec":"none","height":720,"fps":60,"filesize":30000000,"url":"https://x/298"},
+{"format_id":"137","protocol":"https","ext":"mp4","vcodec":"avc1.640028","acodec":"none","height":1080,"fps":30,"filesize":50000000,"url":"https://x/137"},
+{"format_id":"248","protocol":"https","ext":"webm","vcodec":"vp9","acodec":"none","height":1080,"fps":30,"filesize":45000000,"url":"https://x/248"},
+{"format_id":"299","protocol":"https","ext":"mp4","vcodec":"avc1.64002a","acodec":"none","height":1080,"fps":60,"filesize":80000000,"url":"https://x/299"},
+{"format_id":"303","protocol":"https","ext":"webm","vcodec":"vp9","acodec":"none","height":1080,"fps":59.94,"filesize_approx":75000000,"url":"https://x/303"},
+{"format_id":"96","protocol":"m3u8_native","ext":"mp4","vcodec":"avc1.640028","acodec":"mp4a.40.2","height":1080,"fps":30,"url":"https://x/96"}]}
