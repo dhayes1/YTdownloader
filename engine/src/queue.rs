@@ -123,16 +123,37 @@ impl<B> Inner<B> {
         self.emit(QueueEvent::Status { status });
     }
 
-    /// Removes the entries `which` selects in one `Removed` event, cancelling the running one.
-    fn remove_where(&self, s: &mut State, group: Option<GroupId>, which: impl Fn(&QueueEntry) -> bool) {
-        let ids: Vec<EntryId> = s.entries.iter().filter(|e| which(e)).map(|e| e.id).collect();
-        s.entries.retain(|e| !which(e));
+    /// Removes the entries `which` selects, cancelling the running one. A group left with no
+    /// entries is removed too, and its entries go out in their own `Removed` event that names it;
+    /// every other removed entry goes out in one `Removed` event with no group.
+    fn remove_where(&self, s: &mut State, which: impl Fn(&QueueEntry) -> bool) {
+        let (removed, kept): (Vec<QueueEntry>, Vec<QueueEntry>) =
+            std::mem::take(&mut s.entries).into_iter().partition(|e| which(e));
+        s.entries = kept;
+        if removed.is_empty() {
+            return;
+        }
         if let Some((id, token)) = &s.current {
-            if ids.contains(id) {
+            if removed.iter().any(|e| e.id == *id) {
                 token.cancel();
             }
         }
-        self.emit(QueueEvent::Removed { ids, group });
+        let mut emptied: Vec<GroupId> = Vec::new();
+        for g in removed.iter().filter_map(|e| e.group) {
+            if !emptied.contains(&g) && !s.entries.iter().any(|e| e.group == Some(g)) {
+                emptied.push(g);
+            }
+        }
+        let rest: Vec<EntryId> =
+            removed.iter().filter(|e| !e.group.is_some_and(|g| emptied.contains(&g))).map(|e| e.id).collect();
+        if !rest.is_empty() {
+            self.emit(QueueEvent::Removed { ids: rest, group: None });
+        }
+        for g in emptied {
+            s.groups.remove(&g);
+            let ids = removed.iter().filter(|e| e.group == Some(g)).map(|e| e.id).collect();
+            self.emit(QueueEvent::Removed { ids, group: Some(g) });
+        }
     }
 }
 
@@ -212,24 +233,34 @@ impl<B: Backend> Queue<B> {
     /// queue moves on. Files of finished entries are never touched.
     pub fn remove(&self, id: EntryId) {
         let mut s = self.inner.lock();
-        if s.entries.iter().any(|e| e.id == id) {
-            self.inner.remove_where(&mut s, None, |e| e.id == id);
-        }
+        self.inner.remove_where(&mut s, |e| e.id == id);
     }
 
     /// Drops every entry of the playlist in one event, cancelling the running one if it's a member.
+    /// Does nothing for an unknown or already removed group.
     pub fn remove_group(&self, id: GroupId) {
         let mut s = self.inner.lock();
+        if !s.groups.contains_key(&id) {
+            return;
+        }
+        self.inner.remove_where(&mut s, |e| e.group == Some(id));
+        // A playlist added with no entries is still listed; drop it on its own.
         if s.groups.remove(&id).is_some() {
-            self.inner.remove_where(&mut s, Some(id), |e| e.group == Some(id));
+            self.inner.emit(QueueEvent::Removed { ids: Vec::new(), group: Some(id) });
         }
     }
 
     /// Starts working through Waiting entries. Must be called inside a tokio runtime.
+    /// Called after `stop` but before the runner has exited, it cancels the stop: the stopped
+    /// entry goes back to Waiting and the runner picks it up again.
     pub fn start(&self) {
         {
             let mut s = self.inner.lock();
-            if s.runner_alive || !s.entries.iter().any(|e| e.state == EntryState::Waiting) {
+            if s.runner_alive {
+                s.stop_requested = false;
+                return;
+            }
+            if !s.entries.iter().any(|e| e.state == EntryState::Waiting) {
                 return;
             }
             s.runner_alive = true;
@@ -255,9 +286,7 @@ impl<B: Backend> Queue<B> {
     pub fn clear_finished(&self) {
         let finished = |e: &QueueEntry| matches!(e.state, EntryState::Done { .. } | EntryState::Failed { .. });
         let mut s = self.inner.lock();
-        if s.entries.iter().any(finished) {
-            self.inner.remove_where(&mut s, None, finished);
-        }
+        self.inner.remove_where(&mut s, finished);
     }
 
     pub fn status(&self) -> QueueStatus {
@@ -289,7 +318,9 @@ async fn run<B: Backend>(inner: Arc<Inner<B>>) {
         let (id, job, cancel) = {
             let mut s = inner.lock();
             if s.stop_requested {
-                return finish(&inner, &mut s, QueueStatus::Paused);
+                let waiting = s.entries.iter().any(|e| e.state == EntryState::Waiting);
+                let status = if waiting { QueueStatus::Paused } else { QueueStatus::Idle };
+                return finish(&inner, &mut s, status);
             }
             let Some(entry) = s.entries.iter().find(|e| e.state == EntryState::Waiting).cloned() else {
                 return finish(&inner, &mut s, QueueStatus::Idle);
@@ -323,9 +354,9 @@ async fn run<B: Backend>(inner: Arc<Inner<B>>) {
             JobOutcome::Failed(e) => inner.set_state(&mut s, id, EntryState::Failed { msg: e.user_message() }),
             JobOutcome::Cancelled if removed => {}
             JobOutcome::Cancelled => {
-                // Only `stop` and `remove` cancel, so a listed entry was stopped.
+                // Only `stop` and `remove` cancel, so a listed entry was stopped. If `start` has
+                // cancelled the stop since, the loop picks this entry up again.
                 inner.set_state(&mut s, id, EntryState::Waiting);
-                s.stop_requested = true;
             }
         }
         // A pending stop is handled at the top of the loop, under the same lock as picking.
@@ -817,5 +848,98 @@ mod tests {
             serde_json::to_value(QueueEvent::Removed { ids: vec![EntryId(1)], group: None }).unwrap(),
             serde_json::json!({"type":"removed","ids":[1],"group":null})
         );
+    }
+
+    /// Stop, then the running (and only) entry is removed before the runner sees the stop:
+    /// nothing is left Waiting, so the queue ends Idle rather than Paused.
+    #[tokio::test]
+    async fn stop_with_nothing_left_waiting_ends_idle() {
+        let dir = tempfile::tempdir().unwrap();
+        let gated = Gated::new(FakeBackend::new(), Stage::Download);
+        let (q, mut rx) = queue(Arc::clone(&gated), dir.path());
+        let a = q.add_video("a".into(), "A".into());
+        q.start();
+        wait_phase(&mut rx, a, Phase::DownloadingVideo).await;
+        q.stop();
+        q.remove(a);
+        let ev = collect_until_idle(&mut rx).await;
+
+        assert_eq!(last_status(&ev), QueueStatus::Idle, "{ev:?}");
+        assert_eq!(q.status(), QueueStatus::Idle);
+        assert!(!q.is_running());
+    }
+
+    /// Start pressed after Stop but before the runner has exited resumes the queue: the stopped
+    /// entry goes back to Waiting and is picked up again, and the queue never reports Paused.
+    #[tokio::test]
+    async fn start_right_after_stop_resumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let gated = Gated::new(FakeBackend::new(), Stage::Download);
+        let (q, mut rx) = queue(Arc::clone(&gated), dir.path());
+        let a = q.add_video("a".into(), "A".into());
+        let b = q.add_video("b".into(), "B".into());
+        q.start();
+        wait_phase(&mut rx, a, Phase::DownloadingVideo).await;
+        // On the test's single-threaded runtime the runner can't run between these two calls.
+        q.stop();
+        q.start();
+        assert_eq!(q.status(), QueueStatus::Running);
+        gated.open();
+        let ev = collect_until_idle(&mut rx).await;
+
+        assert!(!ev.iter().any(|e| matches!(e, QueueEvent::Status { .. }) && *e != QueueEvent::Status { status: QueueStatus::Idle }), "{ev:?}");
+        let (pa, pb) = (done_path(&ev, a), done_path(&ev, b));
+        assert_eq!(
+            states(&ev),
+            [(a, EntryState::Waiting), (a, EntryState::Running), (a, done(&pa)), (b, EntryState::Running), (b, done(&pb))]
+        );
+        assert_eq!(pa, dir.path().join("Synthetic Video.mkv"), "the stopped run's files were cleaned up");
+        assert_eq!(last_status(&ev), QueueStatus::Idle);
+    }
+
+    #[tokio::test]
+    async fn removing_last_entry_of_group_removes_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let (q, mut rx) = queue(Arc::new(FakeBackend::new()), dir.path());
+
+        // Through `remove`.
+        let g = q.add_playlist(&playlist("Mix", 2));
+        next(&mut rx).await; // Added
+        let m: Vec<EntryId> = q.entries().iter().map(|e| e.id).collect();
+        q.remove(m[0]);
+        assert_eq!(next(&mut rx).await, QueueEvent::Removed { ids: vec![m[0]], group: None });
+        q.remove(m[1]);
+        assert_eq!(next(&mut rx).await, QueueEvent::Removed { ids: vec![m[1]], group: Some(g) });
+        q.remove_group(g); // already gone
+        assert_no_events(&mut rx);
+
+        // Through `clear_finished`: the group's entries come in their own event with the group.
+        let g = q.add_playlist(&playlist("Mix", 2));
+        let single = q.add_video("s".into(), "S".into());
+        let m: Vec<EntryId> = q.entries().iter().filter(|e| e.group == Some(g)).map(|e| e.id).collect();
+        q.start();
+        collect_until_idle(&mut rx).await;
+        q.clear_finished();
+        assert_eq!(next(&mut rx).await, QueueEvent::Removed { ids: vec![single], group: None });
+        assert_eq!(next(&mut rx).await, QueueEvent::Removed { ids: m, group: Some(g) });
+        assert_no_events(&mut rx);
+        assert!(q.entries().is_empty());
+        q.remove_group(g);
+        assert_no_events(&mut rx);
+    }
+
+    #[tokio::test]
+    async fn remove_unknown_group_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let (q, mut rx) = queue(Arc::new(FakeBackend::new()), dir.path());
+        q.remove_group(GroupId(999));
+        assert_no_events(&mut rx);
+
+        let g = q.add_playlist(&playlist("Mix", 1));
+        next(&mut rx).await; // Added
+        q.remove_group(g);
+        assert!(matches!(next(&mut rx).await, QueueEvent::Removed { group: Some(id), .. } if id == g));
+        q.remove_group(g);
+        assert_no_events(&mut rx);
     }
 }
