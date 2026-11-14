@@ -1,9 +1,18 @@
 # YouTube Downloader
 
-A small Windows desktop app (Tauri 2 + Rust) for personal use. Paste a YouTube link, choose
-**Video** (at a resolution the video actually offers) or **MP3**, pick a folder, and download one
-video at a time with progress and a Cancel button. Video is never re-encoded: the best video and
-audio streams are merged with ffmpeg into MP4 when they fit, MKV otherwise.
+A small Windows desktop app (Tauri 2 + Rust) for personal use. Paste a YouTube video or playlist
+link, choose **Video** (Best, up to 1080p, up to 720p, or Smallest) or **MP3**, pick a folder, and
+download. Video is never re-encoded: the best video and audio streams are merged with ffmpeg into
+MP4 when they fit, MKV otherwise.
+
+## The queue
+
+Every link you add goes into a queue. A single video becomes one row; a playlist link becomes a
+folder row with one numbered row per video, saved into `<folder>\<playlist title>\` as
+`NN - Title.ext`. **Start** downloads the waiting rows one at a time, top to bottom, with the quality
+choice read as each video starts. **Stop** pauses after cancelling the running video, **✕** removes
+a row or a whole playlist (cancelling it if it's running), and **Clear finished** tidies up done and
+failed rows. The PC stays awake while the queue runs. The queue isn't saved between runs.
 
 ## Prerequisites
 

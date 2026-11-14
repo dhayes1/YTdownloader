@@ -1,7 +1,8 @@
-// Draws a State onto the existing elements in index.html. No logic beyond "what to show".
+// Draws a State onto the elements in index.html and rebuilds the queue list.
+// No logic beyond "what to show"; clicks are handled by delegation in main.ts via data-* attributes.
 
-import { formatDuration, formatSize, phaseText } from './format';
-import { canDownload, type State } from './state';
+import { QUALITY_CHOICES, phaseText, qualityLabel } from './format';
+import { canAdd, canStart, totals, waitingCount, type Row, type State } from './state';
 
 const INSTALL_HINTS: Record<string, string> = {
   'yt-dlp': 'winget install yt-dlp.yt-dlp',
@@ -15,21 +16,97 @@ function el<T extends HTMLElement = HTMLElement>(root: HTMLElement, id: string):
   return found;
 }
 
-/** The file name from a Windows or POSIX path. */
-function baseName(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
+function node<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function removeButton(attr: 'data-remove-entry' | 'data-remove-group', id: number, label: string): HTMLButtonElement {
+  const b = node('button', 'row-x', '✕');
+  b.type = 'button';
+  b.title = label;
+  b.setAttribute('aria-label', label);
+  b.setAttribute(attr, String(id));
+  return b;
+}
+
+function rowItem(r: Row, s: State): HTMLLIElement {
+  const li = node('li', `item${r.group !== null ? ' in-group' : ''} ${r.state.type}`);
+  const line = node('div', 'item-line');
+  line.append(node('span', 'item-title', `${r.prefix ? `${r.prefix} · ` : ''}${r.title}`));
+
+  switch (r.state.type) {
+    case 'waiting':
+      line.append(node('span', 'item-state', 'Waiting'));
+      break;
+    case 'running': {
+      const bar = node('div', 'bar');
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      const fill = node('div', 'bar-fill');
+      if (r.percent === null) bar.classList.add('indeterminate');
+      else {
+        fill.style.width = `${r.percent}%`;
+        bar.setAttribute('aria-valuenow', String(r.percent));
+      }
+      bar.append(fill);
+      line.append(
+        node('span', 'item-state', r.phase ? phaseText(r.phase) : ''),
+        bar,
+        node('span', 'item-percent', r.percent === null ? '' : `${r.percent}%`),
+      );
+      break;
+    }
+    case 'done':
+      line.append(node('span', 'item-state ok-text', '✓ Done'));
+      break;
+    case 'failed':
+      line.append(node('span', 'item-state error-text reason', `Failed: ${r.state.msg}`));
+      li.classList.add('clickable');
+      li.setAttribute('data-toggle-failure', String(r.id));
+      break;
+  }
+  line.append(removeButton('data-remove-entry', r.id, 'Remove from queue'));
+  li.append(line);
+
+  if (r.state.type === 'failed' && s.openFailure === r.id) {
+    li.append(node('div', 'failure-full', r.state.msg));
+  }
+  return li;
+}
+
+function buildQueue(s: State): HTMLLIElement[] {
+  const items: HTMLLIElement[] = [];
+  const groupIds = new Set(s.groups.map((g) => g.id));
+  for (const g of s.groups) {
+    const members = s.rows.filter((r) => r.group === g.id);
+    const head = node('li', 'item group');
+    const line = node('div', 'item-line');
+    line.append(node('span', 'item-title', `📂 ${g.title}`), node('span', 'item-state', `(${members.length})`));
+    line.append(removeButton('data-remove-group', g.id, 'Remove playlist from queue'));
+    head.append(line);
+    items.push(head, ...members.map((r) => rowItem(r, s)));
+  }
+  // Single videos (and anything whose group is unknown) after the groups, in order.
+  for (const r of s.rows) {
+    if (r.group === null || !groupIds.has(r.group)) items.push(rowItem(r, s));
+  }
+  return items;
 }
 
 export function render(s: State, root: HTMLElement): void {
-  const downloading = s.status === 'downloading';
-  const locked = downloading || s.status === 'starting'; // a job is starting or running
-  const info = s.info;
+  const running = s.status === 'running';
 
-  // URL box: locked during a download, so a paste can't start a second job.
   const url = el<HTMLInputElement>(root, 'url');
-  url.disabled = locked;
-  // Clear (✕) shows only when there's something to clear and a download isn't running.
-  el(root, 'clear-url').hidden = locked || url.value === '';
+  el(root, 'clear-url').hidden = url.value === '';
+  el<HTMLButtonElement>(root, 'add').disabled = !canAdd(s);
 
   // Missing tools
   const tools = el(root, 'tools');
@@ -45,72 +122,48 @@ export function render(s: State, root: HTMLElement): void {
     }),
   );
 
-  el(root, 'probing').hidden = s.status !== 'probing';
-
-  // Video info
-  el(root, 'video').hidden = !info;
-  const thumb = el<HTMLImageElement>(root, 'thumb');
-  if (info?.thumbnailUrl && thumb.getAttribute('src') !== info.thumbnailUrl) {
-    thumb.src = info.thumbnailUrl;
-  }
-  thumb.hidden = !info?.thumbnailUrl;
-  el(root, 'title').textContent = info?.title ?? '';
-  el(root, 'duration').textContent = formatDuration(info?.durationSecs ?? null);
+  el(root, 'probing').hidden = s.link !== 'reading';
+  const linkError = el(root, 'link-error');
+  linkError.hidden = !s.linkError;
+  linkError.textContent = s.linkError ?? '';
 
   // Video | MP3
-  const videoBtn = el<HTMLButtonElement>(root, 'kind-video');
-  const mp3Btn = el<HTMLButtonElement>(root, 'kind-mp3');
-  videoBtn.setAttribute('aria-pressed', String(s.kind === 'video'));
-  mp3Btn.setAttribute('aria-pressed', String(s.kind === 'mp3'));
-  videoBtn.disabled = locked || !info || info.videoOptions.length === 0;
-  mp3Btn.disabled = locked || !info || !info.hasAudio;
+  const isVideo = s.choice.type === 'video';
+  el<HTMLButtonElement>(root, 'kind-video').setAttribute('aria-pressed', String(isVideo));
+  el<HTMLButtonElement>(root, 'kind-mp3').setAttribute('aria-pressed', String(!isVideo));
 
-  // Resolution list (video only)
+  // Quality (video only)
   const quality = el<HTMLSelectElement>(root, 'quality');
-  const options = info?.videoOptions ?? [];
-  const wanted = options.map((o, i) => `${i}|${o.label}|${o.estSize}`).join(',');
-  if (quality.dataset.options !== wanted) {
-    quality.dataset.options = wanted;
-    quality.replaceChildren(
-      ...options.map((o, i) => {
-        const size = formatSize(o.estSize);
-        return new Option(size ? `${o.label}   ${size}` : o.label, String(i));
-      }),
-    );
+  if (quality.options.length === 0) {
+    quality.replaceChildren(...QUALITY_CHOICES.map((q, i) => new Option(qualityLabel(q), String(i))));
   }
-  quality.value = String(s.optionIndex);
-  quality.hidden = s.kind !== 'video';
-  quality.disabled = locked || options.length === 0;
+  if (s.choice.type === 'video') {
+    const q = s.choice.quality;
+    const i = QUALITY_CHOICES.findIndex(
+      (c) => c.type === q.type && (c.type !== 'upTo' || (q.type === 'upTo' && c.height === q.height)),
+    );
+    quality.value = String(Math.max(0, i));
+  }
+  quality.hidden = !isVideo;
 
   // Folder
-  el<HTMLButtonElement>(root, 'folder-btn').disabled = locked;
   const folder = el(root, 'folder');
   folder.textContent = s.folder;
   folder.title = s.folder;
 
-  // Download
-  const download = el<HTMLButtonElement>(root, 'download');
-  download.disabled = !canDownload(s);
-  download.hidden = downloading;
+  // Start
+  const start = el<HTMLButtonElement>(root, 'start');
+  start.textContent = `Start (${waitingCount(s)} waiting)`;
+  start.disabled = !canStart(s);
 
-  // Progress
-  el(root, 'progress').hidden = !downloading;
-  const bar = root.querySelector<HTMLElement>('.bar')!;
-  const fill = el(root, 'bar-fill');
-  const indeterminate = s.percent === null;
-  bar.classList.toggle('indeterminate', indeterminate);
-  fill.style.width = indeterminate ? '' : `${s.percent}%`;
-  if (indeterminate) bar.removeAttribute('aria-valuenow');
-  else bar.setAttribute('aria-valuenow', String(s.percent));
-  el(root, 'phase').textContent = s.phase ? phaseText(s.phase) : '';
-  el(root, 'percent').textContent = indeterminate ? '' : `${s.percent}%`;
+  // Queue list
+  el(root, 'queue').replaceChildren(...buildQueue(s));
+  el(root, 'empty').hidden = s.rows.length > 0;
 
-  // Done
-  el(root, 'done').hidden = s.status !== 'done';
-  el(root, 'done-name').textContent = s.donePath ? baseName(s.donePath) : '';
-
-  // Error
-  const error = el(root, 'error');
-  error.hidden = !s.error;
-  error.textContent = s.error ?? '';
+  // Footer
+  const t = totals(s);
+  el(root, 'totals').textContent = `${t.done} done · ${t.failed} failed · ${t.waiting} waiting`;
+  el(root, 'stop').hidden = !running;
+  el<HTMLButtonElement>(root, 'clear-finished').disabled = t.done + t.failed === 0;
+  el<HTMLButtonElement>(root, 'open-folder').disabled = !s.lastDonePath;
 }

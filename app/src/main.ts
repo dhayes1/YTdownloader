@@ -1,8 +1,9 @@
 // Wiring: every user action and Rust event becomes an Action for the reducer, then we redraw.
 
 import * as api from './api';
-import { buildJob, canDownload, initialState, reduce, type Action, type State } from './state';
-import type { JobEvent } from './types';
+import { QUALITY_CHOICES } from './format';
+import { initialState, reduce, type Action, type State } from './state';
+import type { Choice } from './types';
 import { render } from './view';
 
 const root = document.querySelector<HTMLElement>('main.app')!;
@@ -14,96 +15,101 @@ function dispatch(action: Action): void {
 }
 
 const message = (err: unknown) => (typeof err === 'string' ? err : String(err));
-
-// Job events can arrive before start_download's reply tells us the job's ID.
-// Hold them until then, so a very quick failure isn't dropped.
-let starting = false;
-let early: JobEvent[] = [];
+const quiet = () => {};
 
 function submitUrl(raw: string): void {
-  // Same link already being shown (paste is followed by a change event on blur): nothing to do.
-  // After an error, the same link is allowed again so the user can retry.
-  if (raw.trim() === state.url && state.status !== 'empty' && state.status !== 'error') return;
-  dispatch({ type: 'urlPasted', url: raw });
-  if (state.status !== 'probing') return; // blank, or ignored during a download
-  const url = state.url;
-  api
-    .probe(url)
-    .then((info) => dispatch({ type: 'probeOk', url, info }))
-    .catch((err) => dispatch({ type: 'probeFailed', url, message: message(err) }));
+  if (state.missingTools.length > 0) return;
+  dispatch({ type: 'linkSubmitted', url: raw });
+  if (state.link !== 'reading') return; // blank, or already reading another link
+  const url = state.linkUrl;
+  void (async () => {
+    try {
+      const probed = await api.probeLink(url);
+      if (probed.type === 'video') await api.addVideo(url, probed.info.title);
+      else await api.addPlaylist(probed.playlist);
+      // The box clears after a successful add, unless the user already typed something else.
+      const box = root.querySelector<HTMLInputElement>('#url')!;
+      if (box.value.trim() === url) box.value = '';
+      dispatch({ type: 'linkRead', url });
+    } catch (err) {
+      dispatch({ type: 'linkFailed', url, message: message(err) });
+    }
+  })();
 }
 
-async function startDownload(): Promise<void> {
-  if (!canDownload(state)) return;
-  const job = buildJob(state);
-  dispatch({ type: 'startRequested' }); // disables Download, so a double-click sends one request
-  starting = true;
-  try {
-    const jobId = await api.startDownload(job);
-    dispatch({ type: 'started', jobId });
-  } catch (err) {
-    dispatch({ type: 'startFailed', message: message(err) });
-  } finally {
-    starting = false;
-    const held = early;
-    early = [];
-    held.forEach((event) => dispatch({ type: 'jobEvent', event }));
-  }
+function setChoice(choice: Choice): void {
+  dispatch({ type: 'choiceChanged', choice });
+  api.setChoice(choice).catch(quiet);
 }
 
 function wire(): void {
   const url = root.querySelector<HTMLInputElement>('#url')!;
   // The paste event fires before the text lands in the box, so read it on the next tick.
   url.addEventListener('paste', () => setTimeout(() => submitUrl(url.value)));
-  url.addEventListener('change', () => submitUrl(url.value));
   url.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitUrl(url.value);
     if (e.key === 'Escape') clearUrl();
   });
   url.addEventListener('input', () => render(state, root)); // show or hide the ✕ as you type
 
-  // Clear the link: empty the box and go back to the empty state (ignored during a download).
   function clearUrl(): void {
-    if (url.disabled) return;
     url.value = '';
-    submitUrl('');
-    render(state, root); // the box changed even if the state didn't
+    dispatch({ type: 'linkCleared' });
     url.focus();
   }
   root.querySelector('#clear-url')!.addEventListener('click', clearUrl);
+  root.querySelector('#add')!.addEventListener('click', () => submitUrl(url.value));
 
-  root.querySelector('#kind-video')!.addEventListener('click', () => dispatch({ type: 'kindChanged', kind: 'video' }));
-  root.querySelector('#kind-mp3')!.addEventListener('click', () => dispatch({ type: 'kindChanged', kind: 'mp3' }));
+  root.querySelector('#kind-video')!.addEventListener('click', () => {
+    if (state.choice.type !== 'video') setChoice({ type: 'video', quality: QUALITY_CHOICES[0] });
+  });
+  root.querySelector('#kind-mp3')!.addEventListener('click', () => {
+    if (state.choice.type !== 'mp3') setChoice({ type: 'mp3' });
+  });
 
   const quality = root.querySelector<HTMLSelectElement>('#quality')!;
-  quality.addEventListener('change', () => dispatch({ type: 'optionChanged', index: Number(quality.value) }));
+  quality.addEventListener('change', () =>
+    setChoice({ type: 'video', quality: QUALITY_CHOICES[Number(quality.value)] }),
+  );
 
   root.querySelector('#folder-btn')!.addEventListener('click', async () => {
     const folder = await api.pickFolder();
     if (folder) dispatch({ type: 'folderChanged', folder });
   });
 
-  root.querySelector('#download')!.addEventListener('click', () => void startDownload());
-
-  root.querySelector('#cancel')!.addEventListener('click', () => {
-    if (state.jobId !== undefined) void api.cancelDownload(state.jobId);
+  root.querySelector('#start')!.addEventListener('click', () => void api.startQueue().catch(quiet));
+  root.querySelector('#stop')!.addEventListener('click', () => void api.stopQueue().catch(quiet));
+  root.querySelector('#clear-finished')!.addEventListener('click', () => void api.clearFinished().catch(quiet));
+  root.querySelector('#open-folder')!.addEventListener('click', () => {
+    if (state.lastDonePath) api.reveal(state.lastDonePath).catch(quiet);
   });
 
-  root.querySelector('#open-folder')!.addEventListener('click', () => {
-    if (state.donePath) api.reveal(state.donePath).catch(() => {});
+  // Row and group buttons are rebuilt on every render, so listen once on the list.
+  root.querySelector('#queue')!.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    const entry = target.closest<HTMLElement>('[data-remove-entry]');
+    if (entry) {
+      void api.removeEntry(Number(entry.dataset.removeEntry)).catch(quiet);
+      return;
+    }
+    const group = target.closest<HTMLElement>('[data-remove-group]');
+    if (group) {
+      void api.removeGroup(Number(group.dataset.removeGroup)).catch(quiet);
+      return;
+    }
+    const failed = target.closest<HTMLElement>('[data-toggle-failure]');
+    if (failed) dispatch({ type: 'failureToggled', id: Number(failed.dataset.toggleFailure) });
   });
 }
 
 async function init(): Promise<void> {
   wire();
   render(state, root);
-  await api.onJobEvent((event) => {
-    if (starting) early.push(event);
-    else dispatch({ type: 'jobEvent', event });
-  });
-  const [folder, missing] = await Promise.all([api.getFolder(), api.missingTools()]);
+  await api.onQueueEvent((event) => dispatch({ type: 'queueEvent', event }));
+  const [folder, missing, choice] = await Promise.all([api.getFolder(), api.missingTools(), api.getChoice()]);
   dispatch({ type: 'folderChanged', folder });
   dispatch({ type: 'toolsChecked', missing });
+  dispatch({ type: 'choiceChanged', choice });
 }
 
 void init();

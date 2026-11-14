@@ -4,16 +4,23 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { DownloadJob, JobEvent, VideoInfo } from './types';
+import type { Choice, PlaylistInfo, Probed, QueueEvent } from './types';
 
 export const missingTools = () => invoke<string[]>('missing_tools');
-export const probe = (url: string) => invoke<VideoInfo>('probe', { url });
-export const startDownload = (job: DownloadJob) => invoke<number>('start_download', { job });
-export const cancelDownload = (jobId: number) => invoke<void>('cancel_download', { jobId });
+export const probeLink = (url: string) => invoke<Probed>('probe_link', { url });
+export const addVideo = (url: string, title: string) => invoke<number>('add_video', { url, title });
+export const addPlaylist = (playlist: PlaylistInfo) => invoke<number>('add_playlist', { playlist });
+export const removeEntry = (id: number) => invoke<void>('remove_entry', { id });
+export const removeGroup = (id: number) => invoke<void>('remove_group', { id });
+export const startQueue = () => invoke<void>('start_queue');
+export const stopQueue = () => invoke<void>('stop_queue');
+export const clearFinished = () => invoke<void>('clear_finished');
+export const getChoice = () => invoke<Choice>('get_choice');
+export const setChoice = (choice: Choice) => invoke<void>('set_choice', { choice });
 export const getFolder = () => invoke<string>('get_folder');
 export const pickFolder = () => invoke<string | null>('pick_folder');
 export const reveal = (path: string) => invoke<void>('reveal', { path });
 
-export function onJobEvent(cb: (e: JobEvent) => void): Promise<UnlistenFn> {
-  return listen<JobEvent>('job-event', (e) => cb(e.payload));
+export function onQueueEvent(cb: (e: QueueEvent) => void): Promise<UnlistenFn> {
+  return listen<QueueEvent>('queue-event', (e) => cb(e.payload));
 }

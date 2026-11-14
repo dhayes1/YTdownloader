@@ -1,6 +1,6 @@
 // Small display helpers. Pure functions, tested in format.test.ts.
 
-import type { Phase } from './types';
+import type { Phase, Quality } from './types';
 
 /** 754 → "12:34", 3723 → "1:02:03", null → "". */
 export function formatDuration(secs: number | null): string {
@@ -31,4 +31,23 @@ const PHASE_TEXT: Record<Phase, string> = {
 
 export function phaseText(phase: Phase): string {
   return PHASE_TEXT[phase];
+}
+
+/** The quality choices offered in the dropdown, best first. */
+export const QUALITY_CHOICES: Quality[] = [
+  { type: 'best' },
+  { type: 'upTo', height: 1080 },
+  { type: 'upTo', height: 720 },
+  { type: 'smallest' },
+];
+
+export function qualityLabel(q: Quality): string {
+  switch (q.type) {
+    case 'best':
+      return 'Best';
+    case 'upTo':
+      return `Up to ${q.height}p`;
+    case 'smallest':
+      return 'Smallest';
+  }
 }

@@ -11,21 +11,24 @@
 
   <body>
     <main class="app">
-      <div class="url-box">
-        <input
-          id="url"
-          class="url"
-          type="text"
-          placeholder="Paste a YouTube link"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="YouTube link"
-        />
-        <button id="clear-url" class="clear-url" type="button" title="Clear link (Esc)" aria-label="Clear link" hidden>
-          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-          </svg>
-        </button>
+      <div class="add-row">
+        <div class="url-box">
+          <input
+            id="url"
+            class="url"
+            type="text"
+            placeholder="Paste a video or playlist link"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="YouTube link"
+          />
+          <button id="clear-url" class="clear-url" type="button" title="Clear link (Esc)" aria-label="Clear link" hidden>
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <button id="add" class="secondary add-btn" type="button">Add</button>
       </div>
 
       <section id="tools" class="panel warn" hidden>
@@ -38,13 +41,7 @@
         <span class="spinner" aria-hidden="true"></span> Getting video info…
       </p>
 
-      <section id="video" class="video" hidden>
-        <img id="thumb" class="thumb" alt="" />
-        <div class="meta">
-          <div id="title" class="title"></div>
-          <div id="duration" class="duration"></div>
-        </div>
-      </section>
+      <p id="link-error" class="panel error" role="alert" hidden></p>
 
       <div class="segmented" role="group" aria-label="Download type">
         <button id="kind-video" type="button">Video</button>
@@ -52,7 +49,7 @@
       </div>
 
       <div class="row">
-        <select id="quality" class="quality" aria-label="Resolution"></select>
+        <select id="quality" class="quality" aria-label="Quality"></select>
         <button id="folder-btn" class="icon-btn" type="button" title="Choose folder" aria-label="Choose folder">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2h8.4A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
@@ -61,27 +58,21 @@
       </div>
       <div id="folder" class="folder-path" title=""></div>
 
-      <button id="download" class="primary" type="button">Download</button>
+      <button id="start" class="primary" type="button">Start (0 waiting)</button>
 
-      <section id="progress" class="progress" hidden>
-        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100">
-          <div id="bar-fill" class="bar-fill"></div>
-        </div>
-        <div class="progress-row">
-          <span id="phase"></span>
-          <span id="percent"></span>
-        </div>
-        <div class="actions">
-          <button id="cancel" class="secondary" type="button">Cancel</button>
-        </div>
-      </section>
+      <ul id="queue" class="queue" aria-label="Download queue"></ul>
+      <p id="empty" class="empty">Paste a playlist or video link to start.</p>
 
-      <section id="done" class="panel ok" hidden>
-        <div>Saved <span id="done-name" class="done-name"></span></div>
-        <button id="open-folder" class="secondary" type="button">Open folder</button>
-      </section>
-
-      <p id="error" class="panel error" role="alert" hidden></p>
+      <footer class="queue-footer">
+        <div class="footer-row">
+          <span id="totals" class="totals"></span>
+          <button id="stop" class="secondary" type="button" hidden>Stop</button>
+        </div>
+        <div class="footer-row">
+          <button id="clear-finished" class="secondary" type="button">Clear finished</button>
+          <button id="open-folder" class="secondary" type="button">Open folder</button>
+        </div>
+      </footer>
     </main>
   </body>
 </html>
