@@ -36,6 +36,8 @@ pub struct RawFormat {
     pub filesize_approx: Option<u64>,
     #[serde(default)]
     pub http_headers: HashMap<String, String>,
+    /// Unix time (seconds) before which YouTube refuses the stream with 403.
+    pub available_at: Option<f64>,
 }
 
 /// Parses `yt-dlp -J` output. Playlists and live streams are rejected as `Unsupported`.
@@ -91,6 +93,13 @@ mod tests {
         assert_eq!(i.title, "Synthetic Video");
         assert_eq!(i.formats.len(), 13);
         assert_eq!(i.formats[3].http_headers["User-Agent"], "UA");
+        assert_eq!(i.formats[3].available_at, None);
+    }
+
+    #[test]
+    fn parses_available_at() {
+        let json = r#"{"title":"t","formats":[{"format_id":"251","available_at":1794622619}]}"#;
+        assert_eq!(parse_info(json).unwrap().formats[0].available_at, Some(1794622619.0));
     }
 
     #[test]

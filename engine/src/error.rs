@@ -69,6 +69,11 @@ impl EngineError {
             EngineError::NoStream(what) => {
                 format!("This video has no {what} stream the app can download.")
             }
+            EngineError::Http(detail) if detail.contains("403") => {
+                "YouTube refused the download. Try again in a moment; if it keeps happening, \
+                 update yt-dlp by running `yt-dlp -U`."
+                    .into()
+            }
             EngineError::Http(_) => {
                 "The download stopped before it finished. Check your connection and try again."
                     .into()
@@ -91,6 +96,14 @@ impl EngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_403_message_is_not_about_the_connection() {
+        let m = EngineError::Http("HTTP 403".into()).user_message();
+        assert!(m.contains("YouTube refused"), "{m}");
+        assert!(m.contains("yt-dlp -U"), "{m}");
+        assert!(EngineError::Http("connection ended early".into()).user_message().contains("connection"));
+    }
 
     #[test]
     fn ytdlp_message_suggests_update() {

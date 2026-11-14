@@ -2,6 +2,7 @@
 //! Sends exactly one terminal event (Done, Failed, or Cancelled), always last.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
@@ -12,7 +13,7 @@ use crate::naming::{sanitize_filename, unique_path};
 use crate::select::{container_for, fps_class, select_audio, select_video};
 use crate::tools::{merge_args, mp3_args};
 use crate::types::{DownloadJob, DownloadKind, JobEvent, JobEventKind, JobId, Phase};
-use crate::ytdlp::parse_info;
+use crate::ytdlp::{parse_info, RawFormat};
 
 type Emit<'a> = &'a (dyn Fn(JobEventKind) + Send + Sync);
 
@@ -81,6 +82,7 @@ async fn run_steps<B: Backend>(
             let video_part = part_path(&out, "video");
             let audio_part = part_path(&out, "audio");
 
+            wait_for_streams(&[video, audio], cancel).await?;
             emit(JobEventKind::Phase { phase: Phase::DownloadingVideo });
             created.push(video_part.clone());
             backend.download(video, &video_part, cancel, &progress).await?;
@@ -104,6 +106,7 @@ async fn run_steps<B: Backend>(
             let out = unique_path(&job.folder, &stem, "mp3");
             let audio_part = part_path(&out, "audio");
 
+            wait_for_streams(&[audio], cancel).await?;
             emit(JobEventKind::Phase { phase: Phase::DownloadingAudio });
             created.push(audio_part.clone());
             backend.download(audio, &audio_part, cancel, &progress).await?;
@@ -124,6 +127,32 @@ async fn run_steps<B: Backend>(
 fn part_path(out: &Path, which: &str) -> PathBuf {
     let stem = out.file_stem().unwrap_or_default().to_string_lossy();
     out.with_file_name(format!("{stem}.{which}.part"))
+}
+
+/// Extra wait after `available_at`, in case our clock is slightly ahead of YouTube's.
+const AVAILABLE_MARGIN_SECS: f64 = 1.0;
+
+/// How long to wait before the streams can be requested: YouTube answers 403 to requests made
+/// before a format's `available_at` (yt-dlp sleeps for the same reason). `now` is Unix seconds.
+fn stream_wait(formats: &[&RawFormat], now: f64) -> Duration {
+    let latest = formats.iter().filter_map(|f| f.available_at).fold(f64::MIN, f64::max);
+    if latest <= now {
+        return Duration::ZERO;
+    }
+    Duration::from_secs_f64(latest - now + AVAILABLE_MARGIN_SECS)
+}
+
+/// Waits until every format is available, or returns `Cancelled`.
+async fn wait_for_streams(formats: &[&RawFormat], cancel: &CancellationToken) -> Result<(), EngineError> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+    let wait = stream_wait(formats, now);
+    if wait.is_zero() {
+        return Ok(());
+    }
+    tokio::select! {
+        _ = cancel.cancelled() => Err(EngineError::Cancelled),
+        _ = tokio::time::sleep(wait) => Ok(()),
+    }
 }
 
 fn check(cancel: &CancellationToken) -> Result<(), EngineError> {
@@ -351,6 +380,34 @@ mod tests {
         let ev = run(&FakeBackend::failing(Stage::Ffmpeg), DownloadKind::Mp3, dir.path(), None).await;
         assert!(matches!(&ev.last().unwrap().kind, JobEventKind::Failed { .. }));
         assert!(files(dir.path()).is_empty());
+    }
+
+    /// SYNTH with the best audio (251) not available for a long time.
+    fn synth_not_available_yet() -> &'static str {
+        Box::leak(
+            SYNTH
+                .replace(r#""format_id":"251""#, r#""format_id":"251","available_at":9999999999"#)
+                .into_boxed_str(),
+        )
+    }
+
+    #[test]
+    fn wait_until_latest_available_at_plus_margin() {
+        let info = parse_info(synth_not_available_yet()).unwrap();
+        let audio = select_audio(&info).unwrap();
+        let video = select_video(&info, 1080, 60).unwrap(); // no available_at
+        assert_eq!(stream_wait(&[video], 100.0), Duration::ZERO);
+        assert_eq!(stream_wait(&[video, audio], 9999999999.0 - 3.0), Duration::from_secs(4)); // 3 s + 1 s margin
+        assert_eq!(stream_wait(&[audio], 9999999999.0 + 10.0), Duration::ZERO); // already available
+    }
+
+    #[tokio::test]
+    async fn waits_for_streams_and_cancel_works_during_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeBackend { json: synth_not_available_yet(), ..FakeBackend::new() };
+        let ev = run(&fake, DownloadKind::Mp3, dir.path(), Some(Duration::from_millis(50))).await;
+        assert_eq!(ev.last().unwrap().kind, JobEventKind::Cancelled);
+        assert_eq!(fake.download_calls.load(Ordering::SeqCst), 0, "must not request a stream before available_at");
     }
 
     #[tokio::test]
