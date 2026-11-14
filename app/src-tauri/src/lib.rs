@@ -1,5 +1,6 @@
 //! Tauri glue: registers plugins, shared state, and the commands the frontend calls.
 
+mod close_guard;
 mod commands;
 mod keep_awake;
 mod settings;
@@ -10,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use engine::{Engine, Queue, QueueEvent, SystemBackend};
 use keep_awake::{wants_awake, KeepAwake};
-use tauri::{AppHandle, Emitter, Manager, RunEvent};
+use close_guard::needs_close_confirm;
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_store::StoreExt;
 
 /// Longest we keep the app open after the window closes, waiting for the queue to stop and clean up.
@@ -50,6 +53,30 @@ pub fn run() {
             });
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // Closing with downloads waiting or running: ask first. The dialog is non-blocking
+            // (its callback runs later), so the event loop is never stalled.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" || CLEANUP_EXIT.load(Ordering::SeqCst) {
+                    return;
+                }
+                let app = window.app_handle();
+                if !needs_close_confirm(&app.state::<Queue>().entries()) {
+                    return;
+                }
+                api.prevent_close();
+                let app = app.clone();
+                app.dialog()
+                    .message("Downloads are in progress. Close anyway?")
+                    .title("YouTube Downloader")
+                    .buttons(MessageDialogButtons::OkCancelCustom("Close".into(), "Keep downloading".into()))
+                    .show(move |close| {
+                        if close {
+                            begin_cleanup_exit(&app);
+                        }
+                    });
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::missing_tools,
             commands::probe_link,
@@ -79,15 +106,22 @@ pub fn run() {
                     app.state::<KeepAwake>().set(false);
                     return;
                 }
-                if CLEANUP_EXIT.swap(true, Ordering::SeqCst) {
-                    return; // second request (ours, or the timeout passed): let it exit
-                }
-                api.prevent_exit();
-                queue.stop();
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move { exit_after_cleanup(app).await });
+                if begin_cleanup_exit(app) {
+                    api.prevent_exit();
+                } // else: second request (ours, or the timeout passed): let it exit
             }
         });
+}
+
+/// Starts the stop-then-exit cleanup once. Returns false if it was already started.
+fn begin_cleanup_exit(app: &AppHandle) -> bool {
+    if CLEANUP_EXIT.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    app.state::<Queue>().stop();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { exit_after_cleanup(app).await });
+    true
 }
 
 /// Waits until the stopped queue has finished (cleanup happens before it goes idle), or the
