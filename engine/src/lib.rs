@@ -7,6 +7,8 @@ pub mod error;
 pub mod job;
 pub mod naming;
 pub mod select;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod tools;
 pub mod types;
 pub mod ytdlp;

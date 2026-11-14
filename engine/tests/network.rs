@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use engine::{DownloadJob, DownloadKind, Engine, JobEventKind, Probed};
+use engine::{DownloadJob, DownloadKind, Engine, JobEventKind, Probed, Quality};
 use tokio::sync::mpsc::unbounded_channel;
 
 fn test_url() -> String {
@@ -26,11 +26,12 @@ async fn real_probe_lists_options() {
 async fn real_cancel_then_restart() {
     let dir = tempfile::tempdir().unwrap();
     let engine = Engine::new();
-    let Probed::Video { info } = engine.probe(&test_url()).await.unwrap() else { panic!("expected a video") };
     let job = DownloadJob {
         url: test_url(),
-        kind: DownloadKind::Video { option: info.video_options[0].clone() },
+        kind: DownloadKind::Video { quality: Quality::Best },
         folder: dir.path().to_path_buf(),
+        subfolder: None,
+        prefix: None,
     };
 
     // First run: cancel partway through the video stream.
@@ -72,7 +73,7 @@ async fn real_mp3_download() {
     let engine = Engine::new();
     let (tx, mut rx) = unbounded_channel();
     engine.start(
-        DownloadJob { url: test_url(), kind: DownloadKind::Mp3, folder: dir.path().to_path_buf() },
+        DownloadJob { url: test_url(), kind: DownloadKind::Mp3, folder: dir.path().to_path_buf(), subfolder: None, prefix: None },
         tx,
     );
 

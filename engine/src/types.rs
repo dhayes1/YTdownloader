@@ -56,7 +56,7 @@ pub struct VideoOption {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum DownloadKind {
-    Video { option: VideoOption },
+    Video { quality: Quality },
     Mp3,
 }
 
@@ -76,6 +76,10 @@ pub struct DownloadJob {
     pub url: String,
     pub kind: DownloadKind,
     pub folder: PathBuf,
+    /// Folder created inside `folder` (a playlist's name); sanitized before use.
+    pub subfolder: Option<String>,
+    /// Put before the file name as `{prefix} - ` (a playlist position).
+    pub prefix: Option<String>,
 }
 
 /// Identifies one download. Serializes as a plain number.

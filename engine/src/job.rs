@@ -10,21 +10,29 @@ use tokio_util::sync::CancellationToken;
 use crate::backend::Backend;
 use crate::error::EngineError;
 use crate::naming::{sanitize_filename, unique_path};
-use crate::select::{container_for, fps_class, select_audio, select_video};
+use crate::select::{container_for, select_audio, select_video_for};
 use crate::tools::{merge_args, mp3_args};
 use crate::types::{DownloadJob, DownloadKind, JobEvent, JobEventKind, JobId, Phase};
 use crate::ytdlp::{parse_info, RawFormat};
 
 type Emit<'a> = &'a (dyn Fn(JobEventKind) + Send + Sync);
 
-/// Runs `job` and reports through `events`. Never returns an error: every outcome is an event.
+/// How a job ended. The same result also goes out as the terminal event.
+#[derive(Debug)]
+pub enum JobOutcome {
+    Done(PathBuf),
+    Cancelled,
+    Failed(EngineError),
+}
+
+/// Runs `job` and reports through `events`: every outcome is an event, and also returned.
 pub async fn run_job<B: Backend>(
     backend: &B,
     id: JobId,
     job: DownloadJob,
     cancel: CancellationToken,
     events: &UnboundedSender<JobEvent>,
-) {
+) -> JobOutcome {
     // A closed channel just means nobody is listening any more; the job still finishes.
     let emit = |kind: JobEventKind| {
         let _ = events.send(JobEvent { job_id: id, kind });
@@ -32,19 +40,24 @@ pub async fn run_job<B: Backend>(
     // Files this job created. Removed if the job doesn't succeed.
     let mut created: Vec<PathBuf> = Vec::new();
 
-    let terminal = match run_steps(backend, &job, &cancel, &emit, &mut created).await {
-        Ok(path) => JobEventKind::Done { path },
+    let outcome = match run_steps(backend, &job, &cancel, &emit, &mut created).await {
+        Ok(path) => JobOutcome::Done(path),
         Err(e) => {
             for p in &created {
                 let _ = tokio::fs::remove_file(p).await;
             }
             match e {
-                EngineError::Cancelled => JobEventKind::Cancelled,
-                other => JobEventKind::Failed { msg: other.user_message() },
+                EngineError::Cancelled => JobOutcome::Cancelled,
+                other => JobOutcome::Failed(other),
             }
         }
     };
-    emit(terminal);
+    emit(match &outcome {
+        JobOutcome::Done(path) => JobEventKind::Done { path: path.clone() },
+        JobOutcome::Cancelled => JobEventKind::Cancelled,
+        JobOutcome::Failed(e) => JobEventKind::Failed { msg: e.user_message() },
+    });
+    outcome
 }
 
 /// The job's steps. Returns the final file's path.
@@ -69,19 +82,31 @@ async fn run_steps<B: Backend>(
     if !job.folder.is_dir() {
         return Err(EngineError::Folder(job.folder.clone()));
     }
-    let stem = sanitize_filename(&info.title);
+    let dir = match &job.subfolder {
+        Some(name) => {
+            let dir = job.folder.join(sanitize_filename(name));
+            std::fs::create_dir_all(&dir)?;
+            dir
+        }
+        None => job.folder.clone(),
+    };
+    let title = sanitize_filename(&info.title);
+    let stem = match &job.prefix {
+        Some(prefix) => format!("{prefix} - {title}"),
+        None => title,
+    };
     let progress = |done: u64, total: Option<u64>| emit(JobEventKind::Progress { done, total });
 
     match &job.kind {
-        DownloadKind::Video { option } => {
-            let video = select_video(&info, option.height, fps_class(Some(option.fps as f64)))
+        DownloadKind::Video { quality } => {
+            let video = select_video_for(&info, *quality)
                 .ok_or(EngineError::NoStream("video"))?;
             let audio = select_audio(&info).ok_or(EngineError::NoStream("audio"))?;
             let container = container_for(
                 video.vcodec.as_deref().unwrap_or(""),
                 audio.acodec.as_deref().unwrap_or(""),
             );
-            let out = unique_path(&job.folder, &stem, container.ext());
+            let out = unique_path(&dir, &stem, container.ext());
             let video_part = part_path(&out, "video");
             let audio_part = part_path(&out, "audio");
 
@@ -106,7 +131,7 @@ async fn run_steps<B: Backend>(
         }
         DownloadKind::Mp3 => {
             let audio = select_audio(&info).ok_or(EngineError::NoStream("audio"))?;
-            let out = unique_path(&job.folder, &stem, "mp3");
+            let out = unique_path(&dir, &stem, "mp3");
             let audio_part = part_path(&out, "audio");
 
             wait_for_streams(&[audio], cancel).await?;
@@ -176,99 +201,22 @@ async fn remove_parts(parts: &[PathBuf]) {
 mod tests {
     use super::*;
 
-    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    use async_trait::async_trait;
     use tokio::sync::mpsc::unbounded_channel;
     use tokio_util::sync::CancellationToken;
 
-    use crate::backend::Backend;
-    use crate::download::ProgressFn;
     use crate::error::EngineError;
-    use crate::select::to_video_info;
-    use crate::types::Probed;
-    use crate::types::{DownloadJob, DownloadKind, JobEvent, JobEventKind, JobId, Phase, VideoOption};
-    use crate::ytdlp::{parse_info, RawFormat};
+    use crate::select::{select_audio, select_video};
+    use crate::testing::{FakeBackend, Stage, SYNTH};
+    use crate::types::{DownloadJob, DownloadKind, JobEvent, JobEventKind, JobId, Phase, Probed, Quality};
+    use crate::ytdlp::parse_info;
     use crate::Engine;
 
-    const SYNTH: &str = include_str!("../tests/fixtures/synthetic.json");
-
-    #[derive(Clone, Copy, PartialEq)]
-    enum Stage {
-        Download,
-        Ffmpeg,
-    }
-
-    /// Stands in for yt-dlp, the network, and ffmpeg.
-    struct FakeBackend {
-        json: &'static str,
-        /// Write the file, then wait for Cancel.
-        block_in: Option<Stage>,
-        /// Fail with HTTP 403.
-        fail_in: Option<Stage>,
-        download_calls: AtomicUsize,
-    }
-
-    impl FakeBackend {
-        fn new() -> Self {
-            Self { json: SYNTH, block_in: None, fail_in: None, download_calls: AtomicUsize::new(0) }
-        }
-        fn blocking(stage: Stage) -> Self {
-            Self { block_in: Some(stage), ..Self::new() }
-        }
-        fn failing(stage: Stage) -> Self {
-            Self { fail_in: Some(stage), ..Self::new() }
-        }
-
-        async fn finish(&self, stage: Stage, cancel: &CancellationToken) -> Result<(), EngineError> {
-            if self.block_in == Some(stage) {
-                cancel.cancelled().await;
-                return Err(EngineError::Cancelled);
-            }
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl Backend for FakeBackend {
-        async fn probe_json(&self, _url: &str) -> Result<String, EngineError> {
-            Ok(self.json.to_string())
-        }
-
-        async fn download(
-            &self,
-            _fmt: &RawFormat,
-            dest: &Path,
-            cancel: &CancellationToken,
-            progress: ProgressFn<'_>,
-        ) -> Result<(), EngineError> {
-            self.download_calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail_in == Some(Stage::Download) {
-                return Err(EngineError::Http("HTTP 403".into()));
-            }
-            std::fs::write(dest, [0u8; 100])?;
-            progress(100, Some(100));
-            self.finish(Stage::Download, cancel).await
-        }
-
-        async fn ffmpeg(&self, args: Vec<OsString>, cancel: &CancellationToken) -> Result<(), EngineError> {
-            if self.fail_in == Some(Stage::Ffmpeg) {
-                return Err(EngineError::Ffmpeg("bad".into()));
-            }
-            std::fs::write(args.last().unwrap(), b"out")?;
-            self.finish(Stage::Ffmpeg, cancel).await
-        }
-    }
-
-    fn best_option() -> VideoOption {
-        to_video_info(&parse_info(SYNTH).unwrap()).unwrap().video_options[0].clone() // 1080p60, vp9 → mkv
-    }
-
     fn video() -> DownloadKind {
-        DownloadKind::Video { option: best_option() }
+        DownloadKind::Video { quality: Quality::Best } // 1080p60, vp9 -> mkv
     }
 
     /// Runs one job to completion (cancelling after `cancel_after` if given) and returns its events.
@@ -282,7 +230,7 @@ mod tests {
                 c.cancel();
             });
         }
-        let job = DownloadJob { url: "u".into(), kind, folder: folder.to_path_buf() };
+        let job = DownloadJob { url: "u".into(), kind, folder: folder.to_path_buf(), subfolder: None, prefix: None };
         run_job(fake, JobId(1), job, cancel, &tx).await;
         drop(tx);
         let mut events = Vec::new();
@@ -423,11 +371,91 @@ mod tests {
         assert_eq!(fake.download_calls.load(Ordering::SeqCst), 0);
     }
 
+    /// Runs a job through `run_job` and returns (outcome, events).
+    async fn run_placed(
+        fake: &FakeBackend,
+        folder: &Path,
+        subfolder: Option<&str>,
+        prefix: Option<&str>,
+        cancel: CancellationToken,
+    ) -> (JobOutcome, Vec<JobEvent>) {
+        let (tx, mut rx) = unbounded_channel();
+        let job = DownloadJob {
+            url: "u".into(),
+            kind: video(),
+            folder: folder.to_path_buf(),
+            subfolder: subfolder.map(str::to_string),
+            prefix: prefix.map(str::to_string),
+        };
+        let outcome = run_job(fake, JobId(1), job, cancel, &tx).await;
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(e) = rx.recv().await {
+            events.push(e);
+        }
+        (outcome, events)
+    }
+
+    #[tokio::test]
+    async fn best_quality_video_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let ev = run(&FakeBackend::new(), DownloadKind::Video { quality: Quality::Best }, dir.path(), None).await;
+        assert!(done_path(&ev).ends_with("Synthetic Video.mkv"));
+    }
+
+    #[tokio::test]
+    async fn playlist_job_goes_to_numbered_subfolder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (outcome, _) = run_placed(&FakeBackend::new(), dir.path(), Some("Road Trip"), Some("01"), CancellationToken::new()).await;
+        let JobOutcome::Done(path) = outcome else { panic!("expected Done") };
+        assert_eq!(path, dir.path().join("Road Trip").join("01 - Synthetic Video.mkv"));
+        assert!(path.is_file());
+    }
+
+    #[tokio::test]
+    async fn playlist_job_reuses_folder_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("Road Trip");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("01 - Synthetic Video.mkv"), b"mine").unwrap();
+        let (outcome, _) = run_placed(&FakeBackend::new(), dir.path(), Some("Road Trip"), Some("01"), CancellationToken::new()).await;
+        let JobOutcome::Done(path) = outcome else { panic!("expected Done") };
+        assert!(path.ends_with("01 - Synthetic Video (1).mkv"));
+        assert_eq!(std::fs::read(sub.join("01 - Synthetic Video.mkv")).unwrap(), b"mine");
+    }
+
+    #[tokio::test]
+    async fn playlist_folder_name_is_sanitized() {
+        let dir = tempfile::tempdir().unwrap();
+        let (outcome, _) = run_placed(&FakeBackend::new(), dir.path(), Some("a/b:c"), None, CancellationToken::new()).await;
+        let JobOutcome::Done(path) = outcome else { panic!("expected Done") };
+        assert_eq!(path, dir.path().join("abc").join("Synthetic Video.mkv"));
+
+        let (outcome, _) = run_placed(&FakeBackend::new(), dir.path(), Some("???"), None, CancellationToken::new()).await;
+        let JobOutcome::Done(path) = outcome else { panic!("expected Done") };
+        assert_eq!(path, dir.path().join("download").join("Synthetic Video.mkv"));
+    }
+
+    #[tokio::test]
+    async fn run_job_returns_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let (outcome, ev) = run_placed(&FakeBackend::new(), dir.path(), None, None, CancellationToken::new()).await;
+        assert!(matches!(&outcome, JobOutcome::Done(p) if *p == done_path(&ev)));
+
+        let (outcome, _) = run_placed(&FakeBackend::new(), &dir.path().join("gone"), None, None, CancellationToken::new()).await;
+        assert!(matches!(outcome, JobOutcome::Failed(EngineError::Folder(_))));
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let (outcome, _) = run_placed(&FakeBackend::new(), dir.path(), None, None, cancel).await;
+        assert!(matches!(outcome, JobOutcome::Cancelled));
+    }
+
     #[tokio::test]
     async fn engine_start_returns_unique_ids_and_cancel_unknown_is_noop() {
         let dir = tempfile::tempdir().unwrap();
         let engine = Engine::with_backend(FakeBackend::new());
-        let job = DownloadJob { url: "u".into(), kind: DownloadKind::Mp3, folder: dir.path().to_path_buf() };
+        let job = DownloadJob { url: "u".into(), kind: DownloadKind::Mp3, folder: dir.path().to_path_buf(), subfolder: None, prefix: None };
         let (tx, _rx) = unbounded_channel();
         let a = engine.start(job.clone(), tx.clone());
         let b = engine.start(job, tx);
@@ -439,7 +467,7 @@ mod tests {
     async fn engine_cancel_stops_its_job() {
         let dir = tempfile::tempdir().unwrap();
         let engine = Engine::with_backend(FakeBackend::blocking(Stage::Download));
-        let job = DownloadJob { url: "u".into(), kind: DownloadKind::Mp3, folder: dir.path().to_path_buf() };
+        let job = DownloadJob { url: "u".into(), kind: DownloadKind::Mp3, folder: dir.path().to_path_buf(), subfolder: None, prefix: None };
         let (tx, mut rx) = unbounded_channel();
         let id = engine.start(job, tx);
         tokio::time::sleep(Duration::from_millis(50)).await;
