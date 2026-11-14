@@ -12,7 +12,10 @@ folder row with one numbered row per video, saved into `<folder>\<playlist title
 `NN - Title.ext`. **Start** downloads the waiting rows one at a time, top to bottom, with the quality
 choice read as each video starts. **Stop** pauses after cancelling the running video, **✕** removes
 a row or a whole playlist (cancelling it if it's running), and **Clear finished** tidies up done and
-failed rows. The PC stays awake while the queue runs. The queue isn't saved between runs.
+failed rows. A link to a video inside a playlist asks whether to add the whole playlist or just that
+video. Pasting a link adds it straight away, and your last video quality is remembered. Closing the
+window while downloads are running asks "Downloads are in progress. Close anyway?" (**Close** or
+**Keep downloading**). The PC stays awake while the queue runs. The queue isn't saved between runs.
 
 ## Prerequisites
 
