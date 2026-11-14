@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use engine::{DownloadJob, DownloadKind, Engine, JobEventKind};
+use engine::{DownloadJob, DownloadKind, Engine, JobEventKind, Probed};
 use tokio::sync::mpsc::unbounded_channel;
 
 fn test_url() -> String {
@@ -14,7 +14,7 @@ fn test_url() -> String {
 #[tokio::test]
 #[ignore = "needs network, yt-dlp, ffmpeg, and Deno"]
 async fn real_probe_lists_options() {
-    let info = Engine::new().probe(&test_url()).await.unwrap();
+    let Probed::Video { info } = Engine::new().probe(&test_url()).await.unwrap() else { panic!("expected a video") };
     assert!(!info.title.is_empty());
     assert!(!info.video_options.is_empty());
 }
@@ -26,7 +26,7 @@ async fn real_probe_lists_options() {
 async fn real_cancel_then_restart() {
     let dir = tempfile::tempdir().unwrap();
     let engine = Engine::new();
-    let info = engine.probe(&test_url()).await.unwrap();
+    let Probed::Video { info } = engine.probe(&test_url()).await.unwrap() else { panic!("expected a video") };
     let job = DownloadJob {
         url: test_url(),
         kind: DownloadKind::Video { option: info.video_options[0].clone() },

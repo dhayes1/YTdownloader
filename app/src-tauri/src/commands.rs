@@ -1,7 +1,7 @@
 //! The functions the frontend calls with `invoke(...)`. Errors come back as plain-language
 //! strings from `EngineError::user_message()`.
 
-use engine::{DownloadJob, Engine, JobId, VideoInfo};
+use engine::{DownloadJob, Engine, JobId, Probed};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -20,7 +20,7 @@ pub async fn missing_tools() -> Vec<String> {
 }
 
 #[tauri::command]
-pub async fn probe(engine: State<'_, Engine>, url: String) -> Result<VideoInfo, String> {
+pub async fn probe(engine: State<'_, Engine>, url: String) -> Result<Probed, String> {
     engine.probe(&url).await.map_err(|e| e.user_message())
 }
 

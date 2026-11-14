@@ -16,6 +16,31 @@ pub struct VideoInfo {
     pub has_audio: bool,
 }
 
+/// One video in a playlist listing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistEntry {
+    pub url: String,
+    pub title: String,
+    pub index: u32,
+}
+
+/// A playlist's title and its videos, in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistInfo {
+    pub title: String,
+    pub entries: Vec<PlaylistEntry>,
+}
+
+/// What probing a URL found: a single video or a playlist.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Probed {
+    Video { info: VideoInfo },
+    Playlist { playlist: PlaylistInfo },
+}
+
 /// One entry in the resolution list, for example "1080p60".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,5 +148,25 @@ mod tests {
     fn quality_json_shape() {
         assert_eq!(serde_json::to_value(Quality::UpTo { height: 720 }).unwrap(), serde_json::json!({"type":"upTo","height":720}));
         assert_eq!(serde_json::to_value(Quality::Best).unwrap(), serde_json::json!({"type":"best"}));
+    }
+
+    #[test]
+    fn probed_json_shape() {
+        let p = Probed::Playlist {
+            playlist: PlaylistInfo {
+                title: "T".into(),
+                entries: vec![PlaylistEntry { url: "u".into(), title: "e".into(), index: 1 }],
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            serde_json::json!({"type":"playlist","playlist":{"title":"T","entries":[{"url":"u","title":"e","index":1}]}})
+        );
+        let v = Probed::Video {
+            info: VideoInfo { title: "V".into(), duration_secs: None, thumbnail_url: None, video_options: vec![], has_audio: true },
+        };
+        let j = serde_json::to_value(&v).unwrap();
+        assert_eq!(j["type"], "video");
+        assert_eq!(j["info"]["title"], "V");
     }
 }

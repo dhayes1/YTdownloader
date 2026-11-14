@@ -5,7 +5,7 @@
 //! worst → best, so "best" always means the last match.
 
 use crate::error::EngineError;
-use crate::types::{Quality, VideoInfo, VideoOption};
+use crate::types::{PlaylistEntry, PlaylistInfo, Probed, Quality, VideoInfo, VideoOption};
 use crate::ytdlp::{RawFormat, RawInfo};
 
 /// The file type of the merged video.
@@ -137,6 +137,31 @@ pub fn to_video_info(info: &RawInfo) -> Result<VideoInfo, EngineError> {
     })
 }
 
+/// What probing a URL found: a playlist listing, or a single video's info.
+pub fn to_probed(info: &RawInfo) -> Result<Probed, EngineError> {
+    if info.kind.as_deref() != Some("playlist") {
+        return Ok(Probed::Video { info: to_video_info(info)? });
+    }
+    let entries = info
+        .entries
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            let url = match (&e.url, &e.id) {
+                (Some(u), _) => u.clone(),
+                (None, Some(id)) => format!("https://www.youtube.com/watch?v={id}"),
+                (None, None) => return None,
+            };
+            Some(PlaylistEntry {
+                url,
+                title: e.title.clone().unwrap_or_else(|| "Untitled".into()),
+                index: e.playlist_index.unwrap_or(i as u32 + 1),
+            })
+        })
+        .collect();
+    Ok(Probed::Playlist { playlist: PlaylistInfo { title: info.title.clone(), entries } })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +169,7 @@ mod tests {
     use crate::ytdlp::{parse_info, RawInfo};
 
     const SYNTH: &str = include_str!("../tests/fixtures/synthetic.json");
+    const FLAT: &str = include_str!("../tests/fixtures/flat_playlist.json");
     const COMBINED: &str = include_str!("../tests/fixtures/combined_only.json");
 
     fn info(s: &str) -> RawInfo {
@@ -217,4 +243,13 @@ mod tests {
     #[test] fn quality_cap_below_everything_falls_back_to_smallest() { assert_eq!(select_video_for(&info(SYNTH), Quality::UpTo { height: 480 }).unwrap().format_id, "247"); }
     #[test] fn quality_smallest_prefers_lower_fps() { assert_eq!(select_video_for(&info(SYNTH), Quality::Smallest).unwrap().format_id, "247"); }
     #[test] fn quality_none_when_no_video() { assert!(select_video_for(&info(COMBINED), Quality::Best).is_none()); }
+
+    #[test]
+    fn playlist_probe_lists_entries_in_order() {
+        let Probed::Playlist { playlist } = to_probed(&info(FLAT)).unwrap() else { panic!() };
+        assert_eq!(playlist.title, "Road Trip: Mix/Vol 1");
+        assert_eq!(playlist.entries.iter().map(|e| e.index).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(playlist.entries[1].url, "https://www.youtube.com/watch?v=bbb");
+    }
+    #[test] fn video_probe_is_video() { assert!(matches!(to_probed(&info(SYNTH)).unwrap(), Probed::Video { .. })); }
 }

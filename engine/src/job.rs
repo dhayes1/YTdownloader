@@ -62,6 +62,9 @@ async fn run_steps<B: Backend>(
         r = backend.probe_json(&job.url) => r?,
     };
     let info = parse_info(&json)?;
+    if info.kind.as_deref() == Some("playlist") {
+        return Err(EngineError::NoStream("video"));
+    }
 
     if !job.folder.is_dir() {
         return Err(EngineError::Folder(job.folder.clone()));
@@ -186,6 +189,7 @@ mod tests {
     use crate::download::ProgressFn;
     use crate::error::EngineError;
     use crate::select::to_video_info;
+    use crate::types::Probed;
     use crate::types::{DownloadJob, DownloadKind, JobEvent, JobEventKind, JobId, Phase, VideoOption};
     use crate::ytdlp::{parse_info, RawFormat};
     use crate::Engine;
@@ -455,7 +459,7 @@ mod tests {
     #[tokio::test]
     async fn engine_probe_returns_video_info() {
         let engine = Engine::with_backend(FakeBackend::new());
-        let info = engine.probe("u").await.unwrap();
+        let Probed::Video { info } = engine.probe("u").await.unwrap() else { panic!("expected a video") };
         assert_eq!(info.title, "Synthetic Video");
         assert_eq!(info.video_options.len(), 4);
     }

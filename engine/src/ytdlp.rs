@@ -19,6 +19,19 @@ pub struct RawInfo {
     pub formats: Vec<RawFormat>,
     pub is_live: Option<bool>,
     pub live_status: Option<String>,
+    pub id: Option<String>,
+    pub webpage_url: Option<String>,
+    #[serde(default)]
+    pub entries: Vec<RawEntry>,
+}
+
+/// One item of a flat playlist listing.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawEntry {
+    pub id: Option<String>,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub playlist_index: Option<u32>,
 }
 
 /// One stream yt-dlp found. yt-dlp lists formats from worst to best.
@@ -40,13 +53,19 @@ pub struct RawFormat {
     pub available_at: Option<f64>,
 }
 
-/// Parses `yt-dlp -J` output. Playlists and live streams are rejected as `Unsupported`.
+/// Parses `yt-dlp -J` output. Live streams, channels, and Mixes are rejected as `Unsupported`.
 pub fn parse_info(json: &str) -> Result<RawInfo, EngineError> {
     let info: RawInfo = serde_json::from_str(json)
         .map_err(|e| EngineError::YtDlp(format!("could not read yt-dlp output: {e}")))?;
 
-    if info.kind.as_deref() == Some("playlist") {
-        return Err(EngineError::Unsupported(UnsupportedReason::Playlist));
+    let url = info.webpage_url.as_deref().unwrap_or("");
+    if ["/@", "/channel/", "/c/", "/user/"].iter().any(|p| url.contains(p)) {
+        return Err(EngineError::Unsupported(UnsupportedReason::Channel));
+    }
+    if info.kind.as_deref() == Some("playlist")
+        && info.id.as_deref().is_some_and(|id| id.starts_with("RD"))
+    {
+        return Err(EngineError::Unsupported(UnsupportedReason::Mix));
     }
     let live = info.is_live == Some(true)
         || matches!(info.live_status.as_deref(), Some("is_live" | "is_upcoming"));
@@ -85,7 +104,9 @@ mod tests {
 
     const SYNTH: &str = include_str!("../tests/fixtures/synthetic.json");
     const LIVE: &str = include_str!("../tests/fixtures/live.json");
-    const PLAYLIST: &str = include_str!("../tests/fixtures/playlist.json");
+    const FLAT: &str = include_str!("../tests/fixtures/flat_playlist.json");
+    const CHANNEL: &str = include_str!("../tests/fixtures/channel.json");
+    const MIX: &str = include_str!("../tests/fixtures/mix.json");
 
     #[test]
     fn parses_synthetic() {
@@ -107,10 +128,9 @@ mod tests {
         assert!(matches!(parse_info(LIVE), Err(EngineError::Unsupported(UnsupportedReason::Live))));
     }
 
-    #[test]
-    fn rejects_playlist() {
-        assert!(matches!(parse_info(PLAYLIST), Err(EngineError::Unsupported(UnsupportedReason::Playlist))));
-    }
+    #[test] fn accepts_playlist() { let i = parse_info(FLAT).unwrap(); assert_eq!(i.kind.as_deref(), Some("playlist")); assert_eq!(i.entries.len(), 3); }
+    #[test] fn rejects_channel() { assert!(matches!(parse_info(CHANNEL), Err(EngineError::Unsupported(UnsupportedReason::Channel)))); }
+    #[test] fn rejects_mix() { assert!(matches!(parse_info(MIX), Err(EngineError::Unsupported(UnsupportedReason::Mix)))); }
 
     #[test]
     fn invalid_json_is_ytdlp_error() {

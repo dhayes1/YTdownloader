@@ -52,10 +52,10 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// Reads the video's title, duration, thumbnail, and resolution list.
-    pub async fn probe(&self, url: &str) -> Result<VideoInfo, EngineError> {
+    /// Reads a video's title, duration, thumbnail, and resolution list, or a playlist's entries.
+    pub async fn probe(&self, url: &str) -> Result<Probed, EngineError> {
         let json = self.backend.probe_json(url).await?;
-        select::to_video_info(&ytdlp::parse_info(&json)?)
+        select::to_probed(&ytdlp::parse_info(&json)?)
     }
 
     /// Starts `job` in the background and returns its ID. Events arrive on `events`.

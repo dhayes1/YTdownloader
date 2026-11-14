@@ -11,7 +11,8 @@ pub enum UnsupportedReason {
     Private,
     MembersOnly,
     Live,
-    Playlist,
+    Channel,
+    Mix,
 }
 
 /// An engine error. `Display` (from `#[error]`) is the technical text for logs;
@@ -59,9 +60,12 @@ impl EngineError {
                     "Live streams can't be downloaded. Try again after the stream has ended."
                         .into()
                 }
-                UnsupportedReason::Playlist => {
-                    "That's a playlist link. Paste the link to a single video instead.".into()
+                UnsupportedReason::Channel => {
+                    "That's a channel link. Paste a playlist or video link instead.".into()
                 }
+                UnsupportedReason::Mix => "That's a YouTube Mix, which changes every time. \
+                     Paste a regular playlist or single videos instead."
+                    .into(),
             },
             EngineError::YtDlp(_) => "yt-dlp couldn't read this video. Check the link, then \
                  update yt-dlp by running `yt-dlp -U` and try again."
@@ -130,4 +134,6 @@ mod tests {
             .to_lowercase()
             .contains("age-restricted"));
     }
+
+    #[test] fn mix_message_is_exact() { assert_eq!(EngineError::Unsupported(UnsupportedReason::Mix).user_message(), "That's a YouTube Mix, which changes every time. Paste a regular playlist or single videos instead."); }
 }
