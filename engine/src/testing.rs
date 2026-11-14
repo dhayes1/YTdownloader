@@ -26,6 +26,8 @@ pub(crate) struct FakeBackend {
     pub(crate) json: &'static str,
     /// What the playlist probe returns; `None` means `json`.
     pub(crate) playlist_json: Option<&'static str>,
+    /// The playlist probe fails with a generic yt-dlp error.
+    pub(crate) playlist_fails: bool,
     /// Write the file, then wait for Cancel.
     pub(crate) block_in: Option<Stage>,
     /// Fail with HTTP 403.
@@ -41,6 +43,7 @@ impl FakeBackend {
         Self {
             json: SYNTH,
             playlist_json: None,
+            playlist_fails: false,
             block_in: None,
             fail_in: None,
             private_urls: HashSet::new(),
@@ -75,6 +78,9 @@ impl Backend for FakeBackend {
 
     async fn probe_playlist_json(&self, _url: &str) -> Result<String, EngineError> {
         self.playlist_calls.fetch_add(1, Ordering::SeqCst);
+        if self.playlist_fails {
+            return Err(EngineError::YtDlp("HTTP Error 400".into()));
+        }
         Ok(self.playlist_json.unwrap_or(self.json).to_string())
     }
 

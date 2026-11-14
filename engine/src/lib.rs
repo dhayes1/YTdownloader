@@ -80,13 +80,15 @@ impl<B: Backend> Engine<B> {
         let lookup = if list.starts_with("RD") {
             PlaylistLookup::Mix
         } else {
-            match self.backend.probe_playlist_json(url).await {
-                Ok(json) => match select::to_probed(&ytdlp::parse_info(&json)?)? {
-                    Probed::Playlist { playlist } => PlaylistLookup::Found { playlist },
-                    _ => PlaylistLookup::Unavailable,
-                },
-                Err(EngineError::Unsupported(UnsupportedReason::PlaylistUnavailable)) => PlaylistLookup::Unavailable,
-                Err(e) => return Err(e),
+            // The video itself was readable, so any trouble with the playlist just means the user
+            // is offered "Just this video".
+            let found = match self.backend.probe_playlist_json(url).await {
+                Ok(json) => ytdlp::parse_info(&json).and_then(|i| select::to_probed(&i)),
+                Err(e) => Err(e),
+            };
+            match found {
+                Ok(Probed::Playlist { playlist }) => PlaylistLookup::Found { playlist },
+                _ => PlaylistLookup::Unavailable,
             }
         };
         Ok(Probed::VideoInPlaylist { info: info.clone(), lookup })
@@ -163,6 +165,17 @@ mod tests {
         // A video result for the playlist probe means the list isn't a real playlist.
         let fake = FakeBackend { json: SYNTH, playlist_json: Some(SYNTH), ..FakeBackend::new() };
         let r = Engine::with_backend(fake).probe(PRIVATE).await.unwrap();
+        assert!(matches!(r, Probed::VideoInPlaylist { lookup: PlaylistLookup::Unavailable, .. }), "got {r:?}");
+    }
+
+    #[tokio::test]
+    async fn probe_video_in_playlist_any_playlist_error_is_unavailable() {
+        let fake = FakeBackend { json: SYNTH, playlist_fails: true, ..FakeBackend::new() };
+        let r = Engine::with_backend(fake).probe(REGULAR).await.unwrap();
+        assert!(matches!(r, Probed::VideoInPlaylist { lookup: PlaylistLookup::Unavailable, .. }), "got {r:?}");
+        // An unparseable playlist result is also just "unavailable".
+        let fake = FakeBackend { json: SYNTH, playlist_json: Some("not json"), ..FakeBackend::new() };
+        let r = Engine::with_backend(fake).probe(REGULAR).await.unwrap();
         assert!(matches!(r, Probed::VideoInPlaylist { lookup: PlaylistLookup::Unavailable, .. }), "got {r:?}");
     }
 
