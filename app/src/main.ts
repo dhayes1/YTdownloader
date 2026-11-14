@@ -2,6 +2,7 @@
 
 import * as api from './api';
 import { QUALITY_CHOICES } from './format';
+import { createLinkSubmitter } from './link';
 import { initialState, reduce, type Action, type State } from './state';
 import type { Choice } from './types';
 import { render } from './view';
@@ -14,28 +15,19 @@ function dispatch(action: Action): void {
   render(state, root);
 }
 
-const message = (err: unknown) => (typeof err === 'string' ? err : String(err));
 const quiet = () => {};
 
-function submitUrl(raw: string): void {
-  if (state.missingTools.length > 0) return;
-  dispatch({ type: 'linkSubmitted', url: raw });
-  if (state.link !== 'reading') return; // blank, or already reading another link
-  const url = state.linkUrl;
-  void (async () => {
-    try {
-      const probed = await api.probeLink(url);
-      if (probed.type === 'video') await api.addVideo(url, probed.info.title);
-      else await api.addPlaylist(probed.playlist);
-      // The box clears after a successful add, unless the user already typed something else.
-      const box = root.querySelector<HTMLInputElement>('#url')!;
-      if (box.value.trim() === url) box.value = '';
-      dispatch({ type: 'linkRead', url });
-    } catch (err) {
-      dispatch({ type: 'linkFailed', url, message: message(err) });
-    }
-  })();
-}
+const link = createLinkSubmitter({
+  getState: () => state,
+  dispatch,
+  api,
+  onAdded: (url) => {
+    // The box clears after a successful add, unless the user already typed something else.
+    const box = root.querySelector<HTMLInputElement>('#url')!;
+    if (box.value.trim() === url) box.value = '';
+  },
+});
+const submitUrl = link.submit;
 
 function setChoice(choice: Choice): void {
   dispatch({ type: 'choiceChanged', choice });
@@ -50,11 +42,14 @@ function wire(): void {
     if (e.key === 'Enter') submitUrl(url.value);
     if (e.key === 'Escape') clearUrl();
   });
-  url.addEventListener('input', () => render(state, root)); // show or hide the ✕ as you type
+  // Show or hide the ✕ as you type, without redrawing the list.
+  url.addEventListener('input', () => {
+    root.querySelector<HTMLElement>('#clear-url')!.hidden = url.value === '';
+  });
 
   function clearUrl(): void {
     url.value = '';
-    dispatch({ type: 'linkCleared' });
+    link.clear();
     url.focus();
   }
   root.querySelector('#clear-url')!.addEventListener('click', clearUrl);
@@ -84,7 +79,7 @@ function wire(): void {
     if (state.lastDonePath) api.reveal(state.lastDonePath).catch(quiet);
   });
 
-  // Row and group buttons are rebuilt on every render, so listen once on the list.
+  // Row elements are kept between renders, but one listener on the list is still simplest.
   root.querySelector('#queue')!.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     const entry = target.closest<HTMLElement>('[data-remove-entry]');

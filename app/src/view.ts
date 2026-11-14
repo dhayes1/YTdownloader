@@ -1,4 +1,4 @@
-// Draws a State onto the elements in index.html and rebuilds the queue list.
+// Draws a State onto the elements in index.html and keeps the queue list in sync.
 // No logic beyond "what to show"; clicks are handled by delegation in main.ts via data-* attributes.
 
 import { QUALITY_CHOICES, phaseText, qualityLabel } from './format';
@@ -27,6 +27,10 @@ function node<K extends keyof HTMLElementTagNameMap>(
   return n;
 }
 
+function setText(e: HTMLElement, text: string): void {
+  if (e.textContent !== text) e.textContent = text;
+}
+
 function removeButton(attr: 'data-remove-entry' | 'data-remove-group', id: number, label: string): HTMLButtonElement {
   const b = node('button', 'row-x', '✕');
   b.type = 'button';
@@ -36,69 +40,136 @@ function removeButton(attr: 'data-remove-entry' | 'data-remove-group', id: numbe
   return b;
 }
 
-function rowItem(r: Row, s: State): HTMLLIElement {
-  const li = node('li', `item${r.group !== null ? ' in-group' : ''} ${r.state.type}`);
+// Row elements are created once per id and then updated in place, so a click, keyboard focus on a
+// ✕ and the indeterminate animation all survive progress ticks.
+interface RowEls {
+  li: HTMLLIElement;
+  title: HTMLElement;
+  state: HTMLElement;
+  bar: HTMLElement;
+  fill: HTMLElement;
+  percent: HTMLElement;
+  failure?: HTMLElement;
+}
+const rowEls = new Map<number, RowEls>();
+const groupEls = new Map<number, { li: HTMLLIElement; title: HTMLElement; count: HTMLElement }>();
+
+function createRow(r: Row): RowEls {
+  const li = node('li', 'item');
   const line = node('div', 'item-line');
-  line.append(node('span', 'item-title', `${r.prefix ? `${r.prefix} · ` : ''}${r.title}`));
-
-  switch (r.state.type) {
-    case 'waiting':
-      line.append(node('span', 'item-state', 'Waiting'));
-      break;
-    case 'running': {
-      const bar = node('div', 'bar');
-      bar.setAttribute('role', 'progressbar');
-      bar.setAttribute('aria-valuemin', '0');
-      bar.setAttribute('aria-valuemax', '100');
-      const fill = node('div', 'bar-fill');
-      if (r.percent === null) bar.classList.add('indeterminate');
-      else {
-        fill.style.width = `${r.percent}%`;
-        bar.setAttribute('aria-valuenow', String(r.percent));
-      }
-      bar.append(fill);
-      line.append(
-        node('span', 'item-state', r.phase ? phaseText(r.phase) : ''),
-        bar,
-        node('span', 'item-percent', r.percent === null ? '' : `${r.percent}%`),
-      );
-      break;
-    }
-    case 'done':
-      line.append(node('span', 'item-state ok-text', '✓ Done'));
-      break;
-    case 'failed':
-      line.append(node('span', 'item-state error-text reason', `Failed: ${r.state.msg}`));
-      li.classList.add('clickable');
-      li.setAttribute('data-toggle-failure', String(r.id));
-      break;
-  }
-  line.append(removeButton('data-remove-entry', r.id, 'Remove from queue'));
+  const title = node('span', 'item-title');
+  const state = node('span', 'item-state');
+  const bar = node('div', 'bar');
+  bar.setAttribute('role', 'progressbar');
+  bar.setAttribute('aria-valuemin', '0');
+  bar.setAttribute('aria-valuemax', '100');
+  const fill = node('div', 'bar-fill');
+  bar.append(fill);
+  const percent = node('span', 'item-percent');
+  line.append(title, state, bar, percent, removeButton('data-remove-entry', r.id, 'Remove from queue'));
   li.append(line);
-
-  if (r.state.type === 'failed' && s.openFailure === r.id) {
-    li.append(node('div', 'failure-full', r.state.msg));
-  }
-  return li;
+  return { li, title, state, bar, fill, percent };
 }
 
-function buildQueue(s: State): HTMLLIElement[] {
-  const items: HTMLLIElement[] = [];
+function updateRow(e: RowEls, r: Row, s: State): void {
+  const { li } = e;
+  const cls = `item${r.group !== null ? ' in-group' : ''} ${r.state.type}${r.state.type === 'failed' ? ' clickable' : ''}`;
+  if (li.className !== cls) li.className = cls;
+  setText(e.title, `${r.prefix ? `${r.prefix} · ` : ''}${r.title}`);
+
+  const running = r.state.type === 'running';
+  e.bar.hidden = !running;
+  e.percent.hidden = !running;
+  let stateClass = 'item-state';
+  switch (r.state.type) {
+    case 'waiting':
+      setText(e.state, 'Waiting');
+      break;
+    case 'running':
+      setText(e.state, r.phase ? phaseText(r.phase) : '');
+      e.bar.classList.toggle('indeterminate', r.percent === null);
+      if (r.percent === null) {
+        e.fill.style.width = '';
+        e.bar.removeAttribute('aria-valuenow');
+      } else {
+        e.fill.style.width = `${r.percent}%`;
+        e.bar.setAttribute('aria-valuenow', String(r.percent));
+      }
+      setText(e.percent, r.percent === null ? '' : `${r.percent}%`);
+      break;
+    case 'done':
+      setText(e.state, '✓ Done');
+      stateClass += ' ok-text';
+      break;
+    case 'failed':
+      setText(e.state, `Failed: ${r.state.msg}`);
+      stateClass += ' error-text reason';
+      break;
+  }
+  if (e.state.className !== stateClass) e.state.className = stateClass;
+
+  if (r.state.type === 'failed') li.setAttribute('data-toggle-failure', String(r.id));
+  else li.removeAttribute('data-toggle-failure');
+
+  if (r.state.type === 'failed' && s.openFailure === r.id) {
+    if (!e.failure) {
+      e.failure = node('div', 'failure-full');
+      li.append(e.failure);
+    }
+    setText(e.failure, r.state.msg);
+  } else if (e.failure) {
+    e.failure.remove();
+    e.failure = undefined;
+  }
+}
+
+function groupItem(g: { id: number; title: string }, count: number): HTMLLIElement {
+  let e = groupEls.get(g.id);
+  if (!e) {
+    const li = node('li', 'item group');
+    const line = node('div', 'item-line');
+    const title = node('span', 'item-title');
+    const countEl = node('span', 'item-state');
+    line.append(title, countEl, removeButton('data-remove-group', g.id, 'Remove playlist from queue'));
+    li.append(line);
+    e = { li, title, count: countEl };
+    groupEls.set(g.id, e);
+  }
+  setText(e.title, `📂 ${g.title}`);
+  setText(e.count, `(${count})`);
+  return e.li;
+}
+
+/** Bring the list's children in line with the state, touching only what changed. */
+function syncQueue(list: HTMLElement, s: State): void {
+  const wanted: HTMLLIElement[] = [];
+  const seen = new Set<number>();
+  const addRow = (r: Row) => {
+    let e = rowEls.get(r.id);
+    if (!e) {
+      e = createRow(r);
+      rowEls.set(r.id, e);
+    }
+    updateRow(e, r, s);
+    seen.add(r.id);
+    wanted.push(e.li);
+  };
   const groupIds = new Set(s.groups.map((g) => g.id));
   for (const g of s.groups) {
     const members = s.rows.filter((r) => r.group === g.id);
-    const head = node('li', 'item group');
-    const line = node('div', 'item-line');
-    line.append(node('span', 'item-title', `📂 ${g.title}`), node('span', 'item-state', `(${members.length})`));
-    line.append(removeButton('data-remove-group', g.id, 'Remove playlist from queue'));
-    head.append(line);
-    items.push(head, ...members.map((r) => rowItem(r, s)));
+    wanted.push(groupItem(g, members.length));
+    members.forEach(addRow);
   }
   // Single videos (and anything whose group is unknown) after the groups, in order.
-  for (const r of s.rows) {
-    if (r.group === null || !groupIds.has(r.group)) items.push(rowItem(r, s));
-  }
-  return items;
+  for (const r of s.rows) if (r.group === null || !groupIds.has(r.group)) addRow(r);
+
+  for (const id of [...rowEls.keys()]) if (!seen.has(id)) rowEls.delete(id);
+  for (const id of [...groupEls.keys()]) if (!groupIds.has(id)) groupEls.delete(id);
+
+  wanted.forEach((li, i) => {
+    if (list.children[i] !== li) list.insertBefore(li, list.children[i] ?? null);
+  });
+  while (list.children.length > wanted.length) list.lastElementChild!.remove();
 }
 
 export function render(s: State, root: HTMLElement): void {
@@ -157,7 +228,7 @@ export function render(s: State, root: HTMLElement): void {
   start.disabled = !canStart(s);
 
   // Queue list
-  el(root, 'queue').replaceChildren(...buildQueue(s));
+  syncQueue(el(root, 'queue'), s);
   el(root, 'empty').hidden = s.rows.length > 0;
 
   // Footer
