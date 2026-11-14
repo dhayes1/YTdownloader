@@ -132,22 +132,6 @@ button:focus-visible {
   color: var(--text);
 }
 
-/* Video info */
-.video {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.thumb {
-  width: 112px;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  border-radius: var(--radius-sm);
-  background: var(--track);
-  flex-shrink: 0;
-}
-
 .meta {
   min-width: 0;
 }
@@ -413,11 +397,6 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-}
-
-.done-name {
-  font-weight: 600;
-  word-break: break-all;
 }
 
 /* ---- V2 queue (layout A) ---- */

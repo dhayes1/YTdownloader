@@ -181,3 +181,29 @@ export function totals(s: State): { done: number; failed: number; waiting: numbe
   }
   return { done, failed, waiting: waitingCount(s) };
 }
+
+/** One line of the queue list: a playlist header or a video row. */
+export type LayoutItem = { kind: 'group'; group: QueueGroup; count: number } | { kind: 'row'; row: Row };
+
+/**
+ * The list in the order the engine runs it: rows as added, with each playlist's header just
+ * before its first member. Rows whose group is unknown are shown as single videos.
+ */
+export function queueLayout(s: State): LayoutItem[] {
+  const groups = new Map(s.groups.map((g) => [g.id, g]));
+  const counts = new Map<number, number>();
+  for (const r of s.rows) if (r.group !== null) counts.set(r.group, (counts.get(r.group) ?? 0) + 1);
+  const items: LayoutItem[] = [];
+  const headed = new Set<number>();
+  for (const r of s.rows) {
+    const g = r.group === null ? undefined : groups.get(r.group);
+    if (g && !headed.has(g.id)) {
+      headed.add(g.id);
+      items.push({ kind: 'group', group: g, count: counts.get(g.id) ?? 0 });
+    }
+    items.push({ kind: 'row', row: r });
+  }
+  // A playlist added with no entries is still listed.
+  for (const g of s.groups) if (!headed.has(g.id)) items.push({ kind: 'group', group: g, count: 0 });
+  return items;
+}

@@ -22,20 +22,26 @@ const link = createLinkSubmitter({
   dispatch,
   api,
   onAdded: (url) => {
-    // The box clears after a successful add, unless the user already typed something else.
+    // The added link leaves the box; anything else in it (a link pasted meanwhile) stays.
     const box = root.querySelector<HTMLInputElement>('#url')!;
-    if (box.value.trim() === url) box.value = '';
+    box.value = box.value.replace(url, '').trim();
+    root.querySelector<HTMLElement>('#clear-url')!.hidden = box.value === '';
   },
 });
 const submitUrl = link.submit;
 
+// Set once the user picks Video/MP3 or a quality, so the startup load doesn't overwrite it.
+let choiceTouched = false;
+
 function setChoice(choice: Choice): void {
+  choiceTouched = true;
   dispatch({ type: 'choiceChanged', choice });
   api.setChoice(choice).catch(quiet);
 }
 
 /** Switch Video | MP3; going back to Video restores the remembered quality. */
 function setKind(kind: 'video' | 'mp3'): void {
+  choiceTouched = true;
   dispatch({ type: 'kindChanged', kind });
   api.setChoice(state.choice).catch(quiet);
 }
@@ -123,8 +129,10 @@ async function init(): Promise<void> {
   ]);
   dispatch({ type: 'folderChanged', folder });
   dispatch({ type: 'toolsChecked', missing });
-  dispatch({ type: 'videoQualityLoaded', quality });
-  dispatch({ type: 'choiceChanged', choice });
+  if (!choiceTouched) {
+    dispatch({ type: 'videoQualityLoaded', quality });
+    dispatch({ type: 'choiceChanged', choice });
+  }
 }
 
 void init();

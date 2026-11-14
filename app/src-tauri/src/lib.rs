@@ -141,6 +141,10 @@ fn begin_cleanup_exit(app: &AppHandle) {
     if CLEANUP_EXIT.swap(true, Ordering::SeqCst) {
         return;
     }
+    // Hide the window so it can't be used while cleanup finishes.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
     app.state::<Queue>().stop();
     let app = app.clone();
     tauri::async_runtime::spawn(async move { exit_after_cleanup(app).await });

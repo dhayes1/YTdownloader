@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest';
-import { createLinkSubmitter } from './link';
+import { createLinkSubmitter, videoOnlyUrl } from './link';
 import { initialState, reduce, type Action, type State } from './state';
 import type { PlaylistInfo, PlaylistLookup, Probed } from './types';
 
@@ -193,4 +193,37 @@ test('Whole then Just this video while pending adds only the playlist', async ()
   expect(t.api.addPlaylist).toHaveBeenCalledTimes(1);
   expect(t.api.addVideo).not.toHaveBeenCalled();
   expect(t.get().ask).toBeUndefined();
+});
+
+test('a link pasted while another is read is added after it, even stuck onto the first', async () => {
+  const t = setup();
+  t.link.submit('https://a');
+  t.link.submit('https://ahttps://b'); // the box after pasting B at the end of A
+  expect(t.api.probeLink).toHaveBeenCalledTimes(1);
+  t.pending[0].resolve(video('A'));
+  await flush();
+  expect(t.api.addVideo).toHaveBeenCalledWith('https://a', 'A');
+  expect(t.api.probeLink).toHaveBeenCalledTimes(2);
+  expect(t.pending[1].url).toBe('https://b');
+  t.pending[1].resolve(video('B'));
+  await flush();
+  expect(t.api.addVideo).toHaveBeenCalledWith('https://b', 'B');
+  expect(t.get().link).toBe('idle');
+});
+
+test('a waiting link is dropped when the box is cleared', async () => {
+  const t = setup();
+  t.link.submit('https://a');
+  t.link.submit('https://b');
+  t.link.clear();
+  t.pending[0].resolve(video('A'));
+  await flush();
+  expect(t.api.probeLink).toHaveBeenCalledTimes(1);
+});
+
+test('videoOnlyUrl handles watch, youtu.be and shorts links', () => {
+  expect(videoOnlyUrl('https://www.youtube.com/watch?v=abc&list=PLx')).toBe('https://www.youtube.com/watch?v=abc');
+  expect(videoOnlyUrl('https://youtu.be/abc?list=PLx&si=z')).toBe('https://www.youtube.com/watch?v=abc');
+  expect(videoOnlyUrl('https://www.youtube.com/shorts/abc?list=PLx')).toBe('https://www.youtube.com/watch?v=abc');
+  expect(videoOnlyUrl('nonsense')).toBe('nonsense');
 });

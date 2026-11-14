@@ -2,7 +2,7 @@
 // No logic beyond "what to show"; clicks are handled by delegation in main.ts via data-* attributes.
 
 import { QUALITY_CHOICES, phaseText, qualityLabel } from './format';
-import { canAdd, canStart, totals, waitingCount, type Row, type State } from './state';
+import { canAdd, canStart, queueLayout, totals, waitingCount, type Row, type State } from './state';
 
 const INSTALL_HINTS: Record<string, string> = {
   'yt-dlp': 'winget install yt-dlp.yt-dlp',
@@ -155,13 +155,10 @@ function syncQueue(list: HTMLElement, s: State): void {
     wanted.push(e.li);
   };
   const groupIds = new Set(s.groups.map((g) => g.id));
-  for (const g of s.groups) {
-    const members = s.rows.filter((r) => r.group === g.id);
-    wanted.push(groupItem(g, members.length));
-    members.forEach(addRow);
+  for (const item of queueLayout(s)) {
+    if (item.kind === 'group') wanted.push(groupItem(item.group, item.count));
+    else addRow(item.row);
   }
-  // Single videos (and anything whose group is unknown) after the groups, in order.
-  for (const r of s.rows) if (r.group === null || !groupIds.has(r.group)) addRow(r);
 
   for (const id of [...rowEls.keys()]) if (!seen.has(id)) rowEls.delete(id);
   for (const id of [...groupEls.keys()]) if (!groupIds.has(id)) groupEls.delete(id);

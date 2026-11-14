@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { canAdd, canStart, initialState, reduce, totals, waitingCount, type Action, type State } from './state';
+import { canAdd, canStart, initialState, queueLayout, reduce, totals, waitingCount, type Action, type State } from './state';
 import type { EntryState, QueueEntry, QueueEvent } from './types';
 
 function entry(id: number, opts: Partial<QueueEntry> = {}): QueueEntry {
@@ -248,5 +248,26 @@ describe('remembered video quality', () => {
       { type: 'choiceChanged', choice: { type: 'mp3' } },
     ]);
     expect(s.videoQuality).toEqual({ type: 'smallest' });
+  });
+});
+
+describe('queue layout', () => {
+  const label = (s: State) =>
+    queueLayout(s).map((i) => (i.kind === 'group' ? `G${i.group.id}(${i.count})` : `r${i.row.id}`));
+
+  test('follows the order entries were added, with playlist headers in place', () => {
+    const s = run([
+      added([entry(1)]),
+      added([entry(2, { group: 7 }), entry(3, { group: 7 })], { id: 7, title: 'P' }),
+      added([entry(4)]),
+    ]);
+    expect(label(s)).toEqual(['r1', 'G7(2)', 'r2', 'r3', 'r4']);
+  });
+
+  test('a playlist with no entries is still listed; unknown groups show as singles', () => {
+    let s = run([added([], { id: 9, title: 'Empty' }), added([entry(1, { group: 5 })])]);
+    expect(label(s)).toEqual(['r1', 'G9(0)']);
+    s = run([added([entry(2, { group: 8 }), entry(3, { group: 8 })], { id: 8, title: 'B' }), ev({ type: 'removed', ids: [2], group: null })]);
+    expect(label(s)).toEqual(['G8(1)', 'r3']);
   });
 });

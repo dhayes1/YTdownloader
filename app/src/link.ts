@@ -21,7 +21,10 @@ export interface LinkDeps {
 /** The video's own link (no playlist): watch?v=<id> from the submitted URL; unchanged if it has no v. */
 export function videoOnlyUrl(raw: string): string {
   try {
-    const id = new URL(raw).searchParams.get('v');
+    const u = new URL(raw);
+    const [first, second] = u.pathname.split('/').filter(Boolean);
+    const id =
+      u.hostname.replace(/^www\./, '') === 'youtu.be' ? first : first === 'shorts' ? second : u.searchParams.get('v');
     if (id) return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
   } catch {
     // not a URL; fall through
@@ -40,10 +43,25 @@ export function createLinkSubmitter(deps: LinkDeps) {
   let askToken = 0;
   // True from the moment an answer is claimed until its add finishes, so a second click adds nothing.
   let answering = false;
+  // What the box held when a link was submitted while another was being read. It is submitted
+  // (minus the link just added) once the current link is added, so no paste is lost.
+  let waiting: string | null = null;
+
+  function submitWaiting(added: string): void {
+    const next = waiting;
+    waiting = null;
+    const rest = next?.replace(added, '').trim();
+    if (rest) submit(rest);
+  }
 
   function submit(raw: string): void {
     const before = getState();
-    if (before.link === 'reading' || before.missingTools.length > 0) return;
+    if (before.missingTools.length > 0) return;
+    if (before.link === 'reading') {
+      if (raw.trim() && raw.trim() !== before.linkUrl) waiting = raw;
+      return;
+    }
+    waiting = null;
     if (before.ask) token++; // a new link replaces the question; its answers go stale
     dispatch({ type: 'linkSubmitted', url: raw });
     const after = getState();
@@ -67,8 +85,12 @@ export function createLinkSubmitter(deps: LinkDeps) {
         if (token !== mine) return;
         deps.onAdded(url);
         dispatch({ type: 'linkRead', url });
+        submitWaiting(url);
       } catch (err) {
-        if (token === mine) dispatch({ type: 'linkFailed', url, message: message(err) });
+        if (token === mine) {
+          waiting = null; // the error stays on screen; the box still holds the text
+          dispatch({ type: 'linkFailed', url, message: message(err) });
+        }
       }
     })();
   }
@@ -84,8 +106,13 @@ export function createLinkSubmitter(deps: LinkDeps) {
       if (token !== mine) return;
       deps.onAdded(ask.url);
       dispatch({ type: 'linkRead', url: ask.url });
+      answering = false;
+      submitWaiting(ask.url);
     } catch (err) {
-      if (token === mine) dispatch({ type: 'linkFailed', url: ask.url, message: message(err) });
+      if (token === mine) {
+        waiting = null;
+        dispatch({ type: 'linkFailed', url: ask.url, message: message(err) });
+      }
     } finally {
       if (token === mine) answering = false;
     }
@@ -101,6 +128,7 @@ export function createLinkSubmitter(deps: LinkDeps) {
 
   function clear(): void {
     token++;
+    waiting = null;
     dispatch({ type: 'linkCleared' });
   }
 
