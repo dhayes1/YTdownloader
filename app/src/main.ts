@@ -34,6 +34,12 @@ function setChoice(choice: Choice): void {
   api.setChoice(choice).catch(quiet);
 }
 
+/** Switch Video | MP3; going back to Video restores the remembered quality. */
+function setKind(kind: 'video' | 'mp3'): void {
+  dispatch({ type: 'kindChanged', kind });
+  api.setChoice(state.choice).catch(quiet);
+}
+
 function wire(): void {
   const url = root.querySelector<HTMLInputElement>('#url')!;
   // The paste event fires before the text lands in the box, so read it on the next tick.
@@ -56,10 +62,18 @@ function wire(): void {
   root.querySelector('#add')!.addEventListener('click', () => submitUrl(url.value));
 
   root.querySelector('#kind-video')!.addEventListener('click', () => {
-    if (state.choice.type !== 'video') setChoice({ type: 'video', quality: QUALITY_CHOICES[0] });
+    if (state.choice.type !== 'video') setKind('video');
   });
   root.querySelector('#kind-mp3')!.addEventListener('click', () => {
-    if (state.choice.type !== 'mp3') setChoice({ type: 'mp3' });
+    if (state.choice.type !== 'mp3') setKind('mp3');
+  });
+
+  root.querySelector('#ask-whole')!.addEventListener('click', () => void link.answerWhole());
+  root.querySelector('#ask-video')!.addEventListener('click', () => void link.answerJustVideo());
+  root.querySelector('#ask-close')!.addEventListener('click', clearUrl);
+  // Esc cancels the question wherever the focus is.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.ask && e.target !== url) clearUrl();
   });
 
   const quality = root.querySelector<HTMLSelectElement>('#quality')!;
@@ -101,9 +115,15 @@ async function init(): Promise<void> {
   wire();
   render(state, root);
   await api.onQueueEvent((event) => dispatch({ type: 'queueEvent', event }));
-  const [folder, missing, choice] = await Promise.all([api.getFolder(), api.missingTools(), api.getChoice()]);
+  const [folder, missing, choice, quality] = await Promise.all([
+    api.getFolder(),
+    api.missingTools(),
+    api.getChoice(),
+    api.getVideoQuality(),
+  ]);
   dispatch({ type: 'folderChanged', folder });
   dispatch({ type: 'toolsChecked', missing });
+  dispatch({ type: 'videoQualityLoaded', quality });
   dispatch({ type: 'choiceChanged', choice });
 }
 

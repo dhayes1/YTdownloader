@@ -35,7 +35,13 @@ export interface PlaylistInfo {
   entries: PlaylistEntry[];
 }
 
-export type Probed = { type: 'video'; info: VideoInfo } | { type: 'playlist'; playlist: PlaylistInfo };
+/** What looking up the playlist behind a watch?v=...&list=... link found. */
+export type PlaylistLookup = { type: 'found'; playlist: PlaylistInfo } | { type: 'mix' } | { type: 'unavailable' };
+
+export type Probed =
+  | { type: 'video'; info: VideoInfo }
+  | { type: 'playlist'; playlist: PlaylistInfo }
+  | { type: 'videoInPlaylist'; info: VideoInfo; lookup: PlaylistLookup };
 
 export type Phase = 'probing' | 'downloadingVideo' | 'downloadingAudio' | 'merging' | 'converting';
 

@@ -1,7 +1,17 @@
 // The whole UI's logic as one pure function: (state, action) → new state.
 // No DOM and no Tauri calls here, so it can be tested without a window.
 
-import type { Choice, Phase, QueueEntry, QueueEvent, QueueGroup, QueueStatus } from './types';
+import type {
+  Choice,
+  Phase,
+  PlaylistLookup,
+  Quality,
+  QueueEntry,
+  QueueEvent,
+  QueueGroup,
+  QueueStatus,
+  VideoInfo,
+} from './types';
 
 /** A queue entry plus what the view needs while it runs. */
 export interface Row extends QueueEntry {
@@ -14,6 +24,10 @@ export interface State {
   linkUrl: string;
   linkError?: string;
   choice: Choice;
+  /** Last video quality picked; MP3 -> Video restores it. */
+  videoQuality: Quality;
+  /** The "whole playlist or just this video?" question, while one is open. */
+  ask?: { url: string; info: VideoInfo; lookup: PlaylistLookup };
   folder: string;
   missingTools: string[];
   rows: Row[];
@@ -29,6 +43,9 @@ export type Action =
   | { type: 'folderChanged'; folder: string }
   | { type: 'choiceChanged'; choice: Choice }
   | { type: 'linkSubmitted'; url: string }
+  | { type: 'kindChanged'; kind: 'video' | 'mp3' }
+  | { type: 'videoQualityLoaded'; quality: Quality }
+  | { type: 'linkAsk'; url: string; info: VideoInfo; lookup: PlaylistLookup }
   | { type: 'linkRead'; url: string }
   | { type: 'linkFailed'; url: string; message: string }
   | { type: 'linkCleared' }
@@ -39,6 +56,7 @@ export const initialState: State = {
   link: 'idle',
   linkUrl: '',
   choice: { type: 'video', quality: { type: 'best' } },
+  videoQuality: { type: 'best' },
   folder: '',
   missingTools: [],
   rows: [],
@@ -55,25 +73,35 @@ export function reduce(s: State, a: Action): State {
       return { ...s, folder: a.folder };
 
     case 'choiceChanged':
-      return { ...s, choice: a.choice };
+      return { ...s, choice: a.choice, videoQuality: a.choice.type === 'video' ? a.choice.quality : s.videoQuality };
+
+    case 'kindChanged':
+      return { ...s, choice: a.kind === 'video' ? { type: 'video', quality: s.videoQuality } : { type: 'mp3' } };
+
+    case 'videoQualityLoaded':
+      return { ...s, videoQuality: a.quality };
 
     case 'linkSubmitted': {
       if (s.link === 'reading') return s; // Add can't fire twice
       const url = a.url.trim();
-      if (!url) return { ...s, link: 'idle', linkUrl: '', linkError: undefined };
-      return { ...s, link: 'reading', linkUrl: url, linkError: undefined };
+      if (!url) return { ...s, link: 'idle', linkUrl: '', linkError: undefined, ask: undefined };
+      return { ...s, link: 'reading', linkUrl: url, linkError: undefined, ask: undefined };
     }
 
-    case 'linkRead':
+    case 'linkAsk':
       if (s.link !== 'reading' || a.url !== s.linkUrl) return s; // stale
-      return { ...s, link: 'idle', linkUrl: '', linkError: undefined };
+      return { ...s, link: 'idle', ask: { url: a.url, info: a.info, lookup: a.lookup } };
+
+    case 'linkRead':
+      if (!isCurrent(s, a.url)) return s; // stale
+      return { ...s, link: 'idle', linkUrl: '', linkError: undefined, ask: undefined };
 
     case 'linkFailed':
-      if (s.link !== 'reading' || a.url !== s.linkUrl) return s; // stale
-      return { ...s, link: 'idle', linkError: a.message };
+      if (!isCurrent(s, a.url)) return s; // stale
+      return { ...s, link: 'idle', linkError: a.message, ask: undefined };
 
     case 'linkCleared':
-      return { ...s, link: 'idle', linkUrl: '', linkError: undefined };
+      return { ...s, link: 'idle', linkUrl: '', linkError: undefined, ask: undefined };
 
     case 'failureToggled':
       return { ...s, openFailure: s.openFailure === a.id ? undefined : a.id };
@@ -81,6 +109,11 @@ export function reduce(s: State, a: Action): State {
     case 'queueEvent':
       return reduceQueue(s, a.event);
   }
+}
+
+/** True when a link result belongs to what is being read now, or to the open question. */
+function isCurrent(s: State, url: string): boolean {
+  return (s.link === 'reading' && url === s.linkUrl) || s.ask?.url === url;
 }
 
 function mapRow(s: State, id: number, f: (r: Row) => Row): State {

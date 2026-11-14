@@ -4,7 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Choice, PlaylistInfo, Probed, QueueEvent } from './types';
+import type { Choice, PlaylistInfo, Probed, Quality, QueueEvent } from './types';
 
 export const missingTools = () => invoke<string[]>('missing_tools');
 export const probeLink = (url: string) => invoke<Probed>('probe_link', { url });
@@ -16,6 +16,7 @@ export const startQueue = () => invoke<void>('start_queue');
 export const stopQueue = () => invoke<void>('stop_queue');
 export const clearFinished = () => invoke<void>('clear_finished');
 export const getChoice = () => invoke<Choice>('get_choice');
+export const getVideoQuality = () => invoke<Quality>('get_video_quality');
 export const setChoice = (choice: Choice) => invoke<void>('set_choice', { choice });
 export const getFolder = () => invoke<string>('get_folder');
 export const pickFolder = () => invoke<string | null>('pick_folder');

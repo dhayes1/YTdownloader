@@ -172,6 +172,28 @@ function syncQueue(list: HTMLElement, s: State): void {
   while (list.children.length > wanted.length) list.lastElementChild!.remove();
 }
 
+/** The question that replaces the "Getting video info…" line for a video inside a playlist. */
+function askText(ask: NonNullable<State['ask']>): string {
+  switch (ask.lookup.type) {
+    case 'found': {
+      const n = ask.lookup.playlist.entries.length;
+      return `This video is part of the playlist “${ask.lookup.playlist.title}” (${n} videos).`;
+    }
+    case 'mix':
+      return "That's a YouTube Mix, which changes every time. Paste a regular playlist or single videos instead.";
+    case 'unavailable':
+      return "This playlist is private or doesn't exist.";
+  }
+}
+
+function renderAsk(s: State, root: HTMLElement): void {
+  const panel = el(root, 'ask');
+  panel.hidden = !s.ask;
+  if (!s.ask) return;
+  setText(el(root, 'ask-text'), askText(s.ask));
+  el(root, 'ask-whole').hidden = s.ask.lookup.type !== 'found';
+}
+
 export function render(s: State, root: HTMLElement): void {
   const running = s.status === 'running';
 
@@ -194,6 +216,7 @@ export function render(s: State, root: HTMLElement): void {
   );
 
   el(root, 'probing').hidden = s.link !== 'reading';
+  renderAsk(s, root);
   const linkError = el(root, 'link-error');
   linkError.hidden = !s.linkError;
   linkError.textContent = s.linkError ?? '';

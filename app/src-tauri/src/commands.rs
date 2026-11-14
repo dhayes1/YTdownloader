@@ -4,14 +4,14 @@
 //! Commands that can start the queue are `async` so they run on Tauri's tokio runtime
 //! (`Queue::start` spawns tasks).
 
-use engine::{DownloadKind, Engine, EntryId, GroupId, PlaylistInfo, Probed, Queue};
+use engine::{DownloadKind, Engine, EntryId, GroupId, PlaylistInfo, Probed, Quality, Queue};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_store::StoreExt;
 use tokio::sync::oneshot;
 
-use crate::settings::{resolve_choice, resolve_folder, CHOICE, LAST_FOLDER, STORE_FILE};
+use crate::settings::{resolve_choice, resolve_folder, resolve_video_quality, CHOICE, LAST_FOLDER, STORE_FILE, VIDEO_QUALITY};
 
 /// Event name the frontend listens on; the payload is an `engine::QueueEvent`.
 pub const QUEUE_EVENT: &str = "queue-event";
@@ -72,10 +72,20 @@ pub async fn get_choice(app: AppHandle) -> DownloadKind {
 }
 
 #[tauri::command]
+pub async fn get_video_quality(app: AppHandle) -> Quality {
+    resolve_video_quality(app.store(STORE_FILE).ok().and_then(|s| s.get(VIDEO_QUALITY)))
+}
+
+#[tauri::command]
 pub async fn set_choice(app: AppHandle, queue: State<'_, Queue>, choice: DownloadKind) -> Result<(), String> {
     if let Ok(store) = app.store(STORE_FILE) {
         if let Ok(value) = serde_json::to_value(&choice) {
             store.set(CHOICE, value);
+            if let DownloadKind::Video { quality } = &choice {
+                if let Ok(q) = serde_json::to_value(quality) {
+                    store.set(VIDEO_QUALITY, q);
+                }
+            }
             let _ = store.save();
         }
     }

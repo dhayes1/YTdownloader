@@ -61,6 +61,7 @@ pub fn run() {
             commands::stop_queue,
             commands::clear_finished,
             commands::get_choice,
+            commands::get_video_quality,
             commands::set_choice,
             commands::get_folder,
             commands::pick_folder,

@@ -188,6 +188,42 @@ button:focus-visible {
   }
 }
 
+/* "Whole playlist or just this video?" question */
+.ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+}
+
+.ask-text {
+  margin: 0;
+}
+
+.ask-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ask-buttons .row-x {
+  margin-left: auto;
+}
+
+.ask-btn {
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.ask-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 /* Video | MP3 toggle */
 .segmented {
   display: grid;

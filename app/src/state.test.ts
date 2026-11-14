@@ -177,3 +177,76 @@ describe('derived', () => {
     expect(initialState.choice).toEqual({ type: 'video', quality: { type: 'best' } });
   });
 });
+
+describe('playlist question', () => {
+  const info = { title: 'V', durationSecs: null, thumbnailUrl: null, videoOptions: [], hasAudio: true };
+  const ask: Action = { type: 'linkAsk', url: 'u1', info, lookup: { type: 'mix' } };
+  const reading = (): State => run([{ type: 'linkSubmitted', url: 'u1' }]);
+
+  test('linkAsk sets ask and frees the link box', () => {
+    const s = reduce(reading(), ask);
+    expect(s.ask).toEqual({ url: 'u1', info, lookup: { type: 'mix' } });
+    expect(s.link).toBe('idle');
+    expect(canAdd(s)).toBe(true);
+  });
+
+  test('stale linkAsk is ignored', () => {
+    const cleared = run([{ type: 'linkSubmitted', url: 'u1' }, { type: 'linkCleared' }]);
+    expect(reduce(cleared, ask).ask).toBeUndefined();
+    const other = run([{ type: 'linkSubmitted', url: 'u2' }]);
+    expect(reduce(other, ask).ask).toBeUndefined();
+  });
+
+  test('clearing removes the ask', () => {
+    const s = run([ask, { type: 'linkCleared' }], reading());
+    expect(s.ask).toBeUndefined();
+    expect(s.linkUrl).toBe('');
+  });
+
+  test('a new submit replaces the ask', () => {
+    const s = run([ask, { type: 'linkSubmitted', url: 'u2' }], reading());
+    expect(s.ask).toBeUndefined();
+    expect(s.link).toBe('reading');
+    expect(s.linkUrl).toBe('u2');
+  });
+
+  test('linkRead after an ask clears it', () => {
+    const s = run([ask, { type: 'linkRead', url: 'u1' }], reading());
+    expect(s.ask).toBeUndefined();
+    expect(s.linkUrl).toBe('');
+  });
+
+  test('linkFailed after an ask shows the error and drops the ask', () => {
+    const s = run([ask, { type: 'linkFailed', url: 'u1', message: 'x' }], reading());
+    expect(s.ask).toBeUndefined();
+    expect(s.linkError).toBe('x');
+  });
+});
+
+describe('remembered video quality', () => {
+  test('MP3 then Video restores the last quality', () => {
+    const s = run([
+      { type: 'choiceChanged', choice: { type: 'video', quality: { type: 'upTo', height: 720 } } },
+      { type: 'kindChanged', kind: 'mp3' },
+      { type: 'kindChanged', kind: 'video' },
+    ]);
+    expect(s.choice).toEqual({ type: 'video', quality: { type: 'upTo', height: 720 } });
+  });
+
+  test('loaded quality is used when starting on MP3', () => {
+    const s = run([
+      { type: 'choiceChanged', choice: { type: 'mp3' } },
+      { type: 'videoQualityLoaded', quality: { type: 'smallest' } },
+      { type: 'kindChanged', kind: 'video' },
+    ]);
+    expect(s.choice).toEqual({ type: 'video', quality: { type: 'smallest' } });
+  });
+
+  test('choosing MP3 does not forget the quality', () => {
+    const s = run([
+      { type: 'choiceChanged', choice: { type: 'video', quality: { type: 'smallest' } } },
+      { type: 'choiceChanged', choice: { type: 'mp3' } },
+    ]);
+    expect(s.videoQuality).toEqual({ type: 'smallest' });
+  });
+});

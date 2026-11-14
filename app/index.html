@@ -41,6 +41,15 @@
         <span class="spinner" aria-hidden="true"></span> Getting video info…
       </p>
 
+      <section id="ask" class="panel ask" role="group" aria-labelledby="ask-text" hidden>
+        <p id="ask-text" class="ask-text"></p>
+        <div class="ask-buttons">
+          <button id="ask-whole" class="ask-btn primary" type="button">Whole playlist</button>
+          <button id="ask-video" class="ask-btn" type="button">Just this video</button>
+          <button id="ask-close" class="row-x" type="button" title="Cancel (Esc)" aria-label="Cancel">✕</button>
+        </div>
+      </section>
+
       <p id="link-error" class="panel error" role="alert" hidden></p>
 
       <div class="segmented" role="group" aria-label="Download type">
