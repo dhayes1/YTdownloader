@@ -1,18 +1,20 @@
 //! The functions the frontend calls with `invoke(...)`. Errors come back as plain-language
 //! strings from `EngineError::user_message()`.
+//!
+//! Commands that can start the queue are `async` so they run on Tauri's tokio runtime
+//! (`Queue::start` spawns tasks).
 
-use engine::{DownloadJob, Engine, JobId, Probed};
-use tauri::{AppHandle, Emitter, Manager, State};
+use engine::{DownloadKind, Engine, EntryId, GroupId, PlaylistInfo, Probed, Queue};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_store::StoreExt;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
-use crate::settings::{resolve_folder, LAST_FOLDER, STORE_FILE};
-use crate::state::ActiveJob;
+use crate::settings::{resolve_choice, resolve_folder, CHOICE, LAST_FOLDER, STORE_FILE};
 
-/// Event name the frontend listens on; the payload is an `engine::JobEvent`.
-pub const JOB_EVENT: &str = "job-event";
+/// Event name the frontend listens on; the payload is an `engine::QueueEvent`.
+pub const QUEUE_EVENT: &str = "queue-event";
 
 #[tauri::command]
 pub async fn missing_tools() -> Vec<String> {
@@ -20,67 +22,103 @@ pub async fn missing_tools() -> Vec<String> {
 }
 
 #[tauri::command]
-pub async fn probe(engine: State<'_, Engine>, url: String) -> Result<Probed, String> {
+pub async fn probe_link(engine: State<'_, Engine>, url: String) -> Result<Probed, String> {
     engine.probe(&url).await.map_err(|e| e.user_message())
 }
 
 #[tauri::command]
-pub async fn start_download(
-    app: AppHandle,
-    engine: State<'_, Engine>,
-    active: State<'_, ActiveJob>,
-    job: DownloadJob,
-) -> Result<JobId, String> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let id = active
-        .begin(|| engine.start(job, tx))
-        .ok_or_else(|| "A download is already running.".to_string())?;
+pub async fn add_video(queue: State<'_, Queue>, url: String, title: String) -> Result<EntryId, String> {
+    Ok(queue.add_video(url, title))
+}
 
-    // Forward the job's events to the window, then free the single-job slot.
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            let terminal = event.is_terminal();
-            let _ = app.emit(JOB_EVENT, &event);
-            if terminal {
-                break;
-            }
+#[tauri::command]
+pub async fn add_playlist(queue: State<'_, Queue>, playlist: PlaylistInfo) -> Result<GroupId, String> {
+    Ok(queue.add_playlist(&playlist))
+}
+
+#[tauri::command]
+pub async fn remove_entry(queue: State<'_, Queue>, id: EntryId) -> Result<(), String> {
+    queue.remove(id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_group(queue: State<'_, Queue>, id: GroupId) -> Result<(), String> {
+    queue.remove_group(id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_queue(queue: State<'_, Queue>) -> Result<(), String> {
+    queue.start();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_queue(queue: State<'_, Queue>) -> Result<(), String> {
+    queue.stop();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_finished(queue: State<'_, Queue>) -> Result<(), String> {
+    queue.clear_finished();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_choice(app: AppHandle) -> DownloadKind {
+    resolve_choice(app.store(STORE_FILE).ok().and_then(|s| s.get(CHOICE)))
+}
+
+#[tauri::command]
+pub async fn set_choice(app: AppHandle, queue: State<'_, Queue>, choice: DownloadKind) -> Result<(), String> {
+    if let Ok(store) = app.store(STORE_FILE) {
+        if let Ok(value) = serde_json::to_value(&choice) {
+            store.set(CHOICE, value);
+            let _ = store.save();
         }
-        app.state::<ActiveJob>().finish(id);
-    });
-    Ok(id)
+    }
+    queue.set_choice(choice);
+    Ok(())
 }
 
-#[tauri::command]
-pub fn cancel_download(engine: State<'_, Engine>, job_id: JobId) {
-    engine.cancel(job_id);
-}
-
-#[tauri::command]
-pub fn get_folder(app: AppHandle) -> String {
+/// The saved download folder (or Downloads), without side effects.
+pub fn current_folder(app: &AppHandle) -> std::path::PathBuf {
     let saved = app
         .store(STORE_FILE)
         .ok()
         .and_then(|s| s.get(LAST_FOLDER))
         .and_then(|v| v.as_str().map(String::from));
     let downloads = app.path().download_dir().unwrap_or_default();
-    resolve_folder(saved, downloads).to_string_lossy().into_owned()
+    resolve_folder(saved, downloads)
+}
+
+#[tauri::command]
+pub async fn get_folder(app: AppHandle, queue: State<'_, Queue>) -> Result<String, String> {
+    let folder = current_folder(&app);
+    queue.set_folder(folder.clone());
+    Ok(folder.to_string_lossy().into_owned())
 }
 
 /// Opens a folder picker. Returns the chosen folder (and remembers it), or `None` if cancelled.
 #[tauri::command]
-pub async fn pick_folder(app: AppHandle) -> Option<String> {
+pub async fn pick_folder(app: AppHandle, queue: State<'_, Queue>) -> Result<Option<String>, String> {
     let (tx, rx) = oneshot::channel();
     app.dialog().file().pick_folder(move |picked| {
         let _ = tx.send(picked);
     });
-    let folder = rx.await.ok()??.into_path().ok()?;
-    let folder = folder.to_string_lossy().into_owned();
+    let Some(folder) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+    let folder_str = folder.to_string_lossy().into_owned();
 
     if let Ok(store) = app.store(STORE_FILE) {
-        store.set(LAST_FOLDER, folder.clone());
+        store.set(LAST_FOLDER, folder_str.clone());
         let _ = store.save();
     }
-    Some(folder)
+    queue.set_folder(folder);
+    Ok(Some(folder_str))
 }
 
 /// Shows the file in File Explorer.
