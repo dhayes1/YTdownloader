@@ -9,6 +9,8 @@ Tick each box as it passes; note anything odd underneath it.
 - [ ] **Paste a valid link:** "Getting video info…" shows, then the thumbnail, title, and duration appear — no Go button needed.
 - [ ] **Resolutions:** the list matches what the video offers, highest first and preselected, with `~N MB` where YouTube gives a size. Choose each one; the selection sticks.
 - [ ] **Switch to MP3:** the resolution list hides; switching back to Video restores it.
+- [ ] **Clear the link:** the ✕ appears inside the link box once it has text. Clicking it (or pressing Esc in the box) empties the box, hides the video and any error, and leaves the cursor in the box. The ✕ is hidden and Esc does nothing during a download.
+- [ ] **Installed app:** after running the installer, YouTube Downloader is in the Start menu, opens with no console window, finds yt-dlp/ffmpeg/Deno (no missing-tools panel), and remembers the folder.
 - [ ] **Folder remembered:** choose a different folder, close the app, start it again — the new folder is shown.
 
 ## Downloads

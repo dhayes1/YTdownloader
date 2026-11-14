@@ -164,6 +164,38 @@ test('cannot download while probing or downloading', () => {
   expect(canDownload(downloading())).toBe(false);
 });
 
+describe('clearing the link (✕ button or Esc sends an empty urlPasted)', () => {
+  const clear = (s: State) => reduce(s, { type: 'urlPasted', url: '' });
+
+  test('clears the video and the error', () => {
+    const failed = reduce(downloading(), { type: 'jobEvent', event: ev(1, { type: 'failed', msg: 'x' }) });
+    const s = clear(failed);
+    expect(s.status).toBe('empty');
+    expect(s.info).toBeUndefined();
+    expect(s.error).toBeUndefined();
+    expect(canDownload(s)).toBe(false);
+  });
+
+  test('a probe that returns after clearing is ignored', () => {
+    let s = clear(reduce(initialState, { type: 'urlPasted', url: 'u1' }));
+    s = reduce(s, { type: 'probeOk', url: 'u1', info: SYNTH_INFO });
+    expect(s.status).toBe('empty');
+    expect(s.info).toBeUndefined();
+  });
+
+  test('keeps the folder and the missing-tools list', () => {
+    let s = reduce(ready(), { type: 'toolsChecked', missing: ['deno'] });
+    s = clear(s);
+    expect(s.folder).toBe('C:\\dl');
+    expect(s.missingTools).toEqual(['deno']);
+  });
+
+  test('is ignored while starting or downloading', () => {
+    expect(clear(downloading()).status).toBe('downloading');
+    expect(clear(reduce(ready(), { type: 'startRequested' })).status).toBe('starting');
+  });
+});
+
 describe('while a start request is in flight', () => {
   const starting = () => reduce(ready(), { type: 'startRequested' });
 

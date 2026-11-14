@@ -58,7 +58,19 @@ function wire(): void {
   url.addEventListener('change', () => submitUrl(url.value));
   url.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitUrl(url.value);
+    if (e.key === 'Escape') clearUrl();
   });
+  url.addEventListener('input', () => render(state, root)); // show or hide the ✕ as you type
+
+  // Clear the link: empty the box and go back to the empty state (ignored during a download).
+  function clearUrl(): void {
+    if (url.disabled) return;
+    url.value = '';
+    submitUrl('');
+    render(state, root); // the box changed even if the state didn't
+    url.focus();
+  }
+  root.querySelector('#clear-url')!.addEventListener('click', clearUrl);
 
   root.querySelector('#kind-video')!.addEventListener('click', () => dispatch({ type: 'kindChanged', kind: 'video' }));
   root.querySelector('#kind-mp3')!.addEventListener('click', () => dispatch({ type: 'kindChanged', kind: 'mp3' }));

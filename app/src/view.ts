@@ -28,6 +28,8 @@ export function render(s: State, root: HTMLElement): void {
   // URL box: locked during a download, so a paste can't start a second job.
   const url = el<HTMLInputElement>(root, 'url');
   url.disabled = locked;
+  // Clear (✕) shows only when there's something to clear and a download isn't running.
+  el(root, 'clear-url').hidden = locked || url.value === '';
 
   // Missing tools
   const tools = el(root, 'tools');

@@ -11,15 +11,22 @@
 
   <body>
     <main class="app">
-      <input
-        id="url"
-        class="url"
-        type="text"
-        placeholder="Paste a YouTube link"
-        autocomplete="off"
-        spellcheck="false"
-        aria-label="YouTube link"
-      />
+      <div class="url-box">
+        <input
+          id="url"
+          class="url"
+          type="text"
+          placeholder="Paste a YouTube link"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="YouTube link"
+        />
+        <button id="clear-url" class="clear-url" type="button" title="Clear link (Esc)" aria-label="Clear link" hidden>
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
 
       <section id="tools" class="panel warn" hidden>
         <h2>Some required tools are missing</h2>

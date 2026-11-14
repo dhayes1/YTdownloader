@@ -101,6 +101,37 @@ button:focus-visible {
   opacity: 0.6;
 }
 
+/* Link box with a clear (✕) button inside its right edge */
+.url-box {
+  position: relative;
+}
+
+.url-box .url {
+  padding-right: 38px; /* room for the clear button */
+}
+
+.clear-url {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.clear-url:hover {
+  background: var(--track);
+  color: var(--text);
+}
+
 /* Video info */
 .video {
   display: flex;

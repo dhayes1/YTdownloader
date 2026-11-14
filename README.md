@@ -19,6 +19,22 @@ Windows 10 or 11, with these installed and on `PATH`:
 
 The app never installs, bundles, or updates these tools for you.
 
+## Install and launch
+
+Build the installer (a few minutes; from the `app` folder):
+
+```powershell
+cd app
+npm run tauri build
+```
+
+Then run `target\release\bundle\nsis\YouTube Downloader_<version>_x64-setup.exe` (in the repo root's
+`target` folder). It installs for your user only (no admin needed) and adds **YouTube Downloader**
+to the Start menu, with an uninstall entry in **Settings → Apps**. After changing the code, build
+again and rerun the installer to update.
+
+For development with live reload, use `npm run tauri dev` from the `app` folder instead.
+
 ## Personal use only
 
 Downloading from YouTube generally violates its Terms of Service unless the content is yours or
