@@ -27,13 +27,25 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
-/// The `v` and `list` query parameters of a URL, when it has both and both are non-empty.
+/// The video id and `list` parameter of a URL, when it has both and both are non-empty.
+/// The video id is the `v` parameter, or for `youtu.be/<id>` and `/shorts/<id>` links the path.
 fn video_and_list(url: &str) -> Option<(String, String)> {
-    let query = url.split('#').next()?.split_once('?')?.1;
-    let (mut video, mut list) = (None, None);
+    let no_fragment = url.split('#').next()?;
+    let (before_query, query) = no_fragment.split_once('?')?;
+    let after_scheme = before_query.split_once("://").map_or(before_query, |(_, rest)| rest);
+    let (host, path) = after_scheme.split_once('/').unwrap_or((after_scheme, ""));
+    let mut segments = path.split('/');
+    let path_id = match (host.trim_start_matches("www."), segments.next()) {
+        ("youtu.be", Some(id)) => Some(id),
+        (_, Some("shorts")) => segments.next(),
+        _ => None,
+    }
+    .filter(|id| !id.is_empty());
+
+    let (mut video, mut list) = (path_id.map(str::to_string), None);
     for pair in query.split('&') {
         match pair.split_once('=') {
-            Some(("v", val)) if !val.is_empty() => video = Some(val.to_string()),
+            Some(("v", val)) if !val.is_empty() && path_id.is_none() => video = Some(val.to_string()),
             Some(("list", val)) if !val.is_empty() => list = Some(val.to_string()),
             _ => {}
         }
@@ -135,6 +147,16 @@ mod tests {
         assert_eq!(video_and_list(REGULAR), Some(("x3RK6U8nvPs".into(), "PL4kXoZZASRgs8_19aGso98561fkl8Slmk".into())));
         assert_eq!(video_and_list(PRIVATE), Some(("mwcOKX7PaRg".into(), "PLH0glPyGJz0EOpz04H0cQ4l_xIBaW042K".into())));
         assert_eq!(video_and_list(MIX), Some(("VWYdlnKqByQ".into(), "RDVWYdlnKqByQ".into())));
+        assert_eq!(
+            video_and_list("https://youtu.be/x3RK6U8nvPs?list=PL4kXoZZASRgs8_19aGso98561fkl8Slmk&si=abc"),
+            Some(("x3RK6U8nvPs".into(), "PL4kXoZZASRgs8_19aGso98561fkl8Slmk".into()))
+        );
+        assert_eq!(
+            video_and_list("https://www.youtube.com/shorts/abc123?list=PLx"),
+            Some(("abc123".into(), "PLx".into()))
+        );
+        assert_eq!(video_and_list("https://youtu.be/abc?si=zzz"), None);
+        assert_eq!(video_and_list("https://youtu.be/?list=PLx"), None);
         assert_eq!(video_and_list("https://www.youtube.com/watch?v=abc"), None);
         assert_eq!(video_and_list("https://www.youtube.com/playlist?list=PLx"), None);
         assert_eq!(video_and_list("https://www.youtube.com/watch?pv=abc&xlist=PLx"), None);

@@ -46,6 +46,10 @@ pub async fn run_job<B: Backend>(
             for p in &created {
                 let _ = tokio::fs::remove_file(p).await;
             }
+            // A playlist subfolder this job made stays only if something is in it.
+            if let Some(name) = &job.subfolder {
+                let _ = std::fs::remove_dir(job.folder.join(sanitize_filename(name)));
+            }
             match e {
                 EngineError::Cancelled => JobOutcome::Cancelled,
                 other => JobOutcome::Failed(other),
@@ -434,6 +438,38 @@ mod tests {
         let (outcome, _) = run_placed(&FakeBackend::new(), dir.path(), Some("???"), None, CancellationToken::new()).await;
         let JobOutcome::Done(path) = outcome else { panic!("expected Done") };
         assert_eq!(path, dir.path().join("download").join("Synthetic Video.mkv"));
+    }
+
+    #[tokio::test]
+    async fn failed_playlist_job_removes_empty_subfolder_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (outcome, _) =
+            run_placed(&FakeBackend::failing(Stage::Download), dir.path(), Some("Road Trip"), Some("01"), CancellationToken::new()).await;
+        assert!(matches!(outcome, JobOutcome::Failed(_)));
+        assert!(!dir.path().join("Road Trip").exists());
+
+        // A folder that already holds a file is kept.
+        let sub = dir.path().join("Road Trip");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("02 - Other.mkv"), b"mine").unwrap();
+        let (outcome, _) =
+            run_placed(&FakeBackend::failing(Stage::Download), dir.path(), Some("Road Trip"), Some("01"), CancellationToken::new()).await;
+        assert!(matches!(outcome, JobOutcome::Failed(_)));
+        assert!(sub.join("02 - Other.mkv").is_file());
+    }
+
+    #[tokio::test]
+    async fn cancelled_playlist_job_removes_empty_subfolder() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancellationToken::new();
+        let c = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            c.cancel();
+        });
+        let (outcome, _) = run_placed(&FakeBackend::blocking(Stage::Download), dir.path(), Some("Road Trip"), Some("01"), cancel).await;
+        assert!(matches!(outcome, JobOutcome::Cancelled));
+        assert!(!dir.path().join("Road Trip").exists());
     }
 
     #[tokio::test]

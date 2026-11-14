@@ -102,7 +102,8 @@ struct Inner<B> {
 
 impl<B> Inner<B> {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap()
+        // A panic elsewhere must not take the whole queue down with it.
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// A closed channel just means nobody is listening any more.
@@ -207,7 +208,9 @@ impl<B: Backend> Queue<B> {
     /// Adds every entry of `playlist`, numbered by its playlist position, into a subfolder
     /// named after the playlist.
     pub fn add_playlist(&self, playlist: &PlaylistInfo) -> GroupId {
-        let width = playlist.entries.len().to_string().len().max(2);
+        // Wide enough for the highest position too: unavailable entries may be missing from the list.
+        let highest = playlist.entries.iter().map(|p| p.index as usize).max().unwrap_or(0);
+        let width = playlist.entries.len().max(highest).to_string().len().max(2);
         let mut s = self.inner.lock();
         let group = QueueGroup { id: GroupId(s.next_id), title: playlist.title.clone() };
         s.next_id += 1;
@@ -267,7 +270,7 @@ impl<B: Backend> Queue<B> {
             s.stop_requested = false;
             self.inner.set_status(&mut s, QueueStatus::Running);
         }
-        tokio::spawn(run(Arc::clone(&self.inner)));
+        tokio::spawn(run_guarded(Arc::clone(&self.inner)));
     }
 
     /// Cancels the running entry (it goes back to Waiting) and pauses the queue.
@@ -310,6 +313,33 @@ fn finish<B>(inner: &Inner<B>, s: &mut State, status: QueueStatus) {
     s.stop_requested = false;
     s.current = None;
     inner.set_status(s, status);
+}
+
+/// If the runner panics, this puts the queue back in a usable state: the entry it was running
+/// fails, the runner is marked gone and the status is Paused, so `start` works again.
+struct RunnerGuard<B> {
+    inner: Arc<Inner<B>>,
+    armed: bool,
+}
+
+impl<B> Drop for RunnerGuard<B> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut s = self.inner.lock();
+        if let Some((id, _)) = s.current.take() {
+            let msg = "Something went wrong while downloading this video.".to_string();
+            self.inner.set_state(&mut s, id, EntryState::Failed { msg });
+        }
+        finish(&self.inner, &mut s, QueueStatus::Paused);
+    }
+}
+
+async fn run_guarded<B: Backend>(inner: Arc<Inner<B>>) {
+    let mut guard = RunnerGuard { inner: Arc::clone(&inner), armed: true };
+    run(inner).await;
+    guard.armed = false;
 }
 
 /// The runner task: one entry at a time until none is Waiting, a stop, or a missing folder.
@@ -765,6 +795,67 @@ mod tests {
         let prefixes: Vec<String> = big.entries().into_iter().map(|e| e.prefix.unwrap()).collect();
         assert_eq!(&prefixes[..2], ["007", "120"]);
         assert_eq!(prefixes.len(), 120);
+    }
+
+    #[tokio::test]
+    async fn prefix_width_covers_highest_playlist_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let (q, _rx) = queue(Arc::new(FakeBackend::new()), dir.path());
+        // 3 entries listed, but numbered up to 105 (the rest were unavailable).
+        let info = PlaylistInfo {
+            title: "Gaps".into(),
+            entries: [1, 99, 105].map(|i| PlaylistEntry { url: format!("p{i}"), title: "x".into(), index: i }).to_vec(),
+        };
+        q.add_playlist(&info);
+        let prefixes: Vec<String> = q.entries().into_iter().map(|e| e.prefix.unwrap()).collect();
+        assert_eq!(prefixes, ["001", "099", "105"]);
+    }
+
+    /// Panics when asked to probe the URL "boom"; everything else works.
+    struct Panicky(FakeBackend);
+
+    #[async_trait]
+    impl Backend for Panicky {
+        async fn probe_json(&self, url: &str) -> Result<String, EngineError> {
+            if url == "boom" {
+                panic!("test panic");
+            }
+            self.0.probe_json(url).await
+        }
+        async fn probe_playlist_json(&self, url: &str) -> Result<String, EngineError> {
+            self.0.probe_playlist_json(url).await
+        }
+        async fn download(
+            &self,
+            fmt: &RawFormat,
+            dest: &Path,
+            cancel: &CancellationToken,
+            progress: ProgressFn<'_>,
+        ) -> Result<(), EngineError> {
+            self.0.download(fmt, dest, cancel, progress).await
+        }
+        async fn ffmpeg(&self, args: Vec<OsString>, cancel: &CancellationToken) -> Result<(), EngineError> {
+            self.0.ffmpeg(args, cancel).await
+        }
+    }
+
+    #[tokio::test]
+    async fn runner_panic_pauses_the_queue_and_start_works_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (q, mut rx) = queue(Arc::new(Panicky(FakeBackend::new())), dir.path());
+        let boom = q.add_video("boom".into(), "Boom".into());
+        let ok = q.add_video("ok".into(), "Ok".into());
+        q.start();
+        let ev = collect_until_idle(&mut rx).await;
+        assert_eq!(last_status(&ev), QueueStatus::Paused);
+        assert!(!q.is_running());
+        assert!(matches!(state_of(&q, boom), EntryState::Failed { .. }));
+        assert_eq!(state_of(&q, ok), EntryState::Waiting);
+
+        q.start();
+        let ev = collect_until_idle(&mut rx).await;
+        assert_eq!(last_status(&ev), QueueStatus::Idle);
+        assert!(matches!(state_of(&q, ok), EntryState::Done { .. }));
     }
 
     #[tokio::test]
