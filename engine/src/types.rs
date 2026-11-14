@@ -35,6 +35,15 @@ pub enum DownloadKind {
     Mp3,
 }
 
+/// Which video to pick: the best available, the best at or below a height, or the smallest.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Quality {
+    Best,
+    UpTo { height: u32 },
+    Smallest,
+}
+
 /// Everything the engine needs to run one download.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,5 +117,11 @@ mod tests {
     #[test]
     fn download_kind_json_shape() {
         assert_eq!(serde_json::to_value(DownloadKind::Mp3).unwrap(), serde_json::json!({"type":"mp3"}));
+    }
+
+    #[test]
+    fn quality_json_shape() {
+        assert_eq!(serde_json::to_value(Quality::UpTo { height: 720 }).unwrap(), serde_json::json!({"type":"upTo","height":720}));
+        assert_eq!(serde_json::to_value(Quality::Best).unwrap(), serde_json::json!({"type":"best"}));
     }
 }

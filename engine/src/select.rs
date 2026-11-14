@@ -5,7 +5,7 @@
 //! worst → best, so "best" always means the last match.
 
 use crate::error::EngineError;
-use crate::types::{VideoInfo, VideoOption};
+use crate::types::{Quality, VideoInfo, VideoOption};
 use crate::ytdlp::{RawFormat, RawInfo};
 
 /// The file type of the merged video.
@@ -89,6 +89,19 @@ pub fn select_video(info: &RawInfo, height: u32, fps: u32) -> Option<&RawFormat>
     video_only(info)
         .filter(|f| f.height == Some(height) && fps_class(f.fps) == fps)
         .last()
+}
+
+/// The video stream for a quality choice. Options are ordered height desc, then fps desc,
+/// so Best takes the first, a cap takes the first at or below its height (or the last when
+/// none fit), and Smallest takes the last.
+pub fn select_video_for(info: &RawInfo, quality: Quality) -> Option<&RawFormat> {
+    let options = video_options(info);
+    let option = match quality {
+        Quality::Best => options.first(),
+        Quality::UpTo { height } => options.iter().find(|o| o.height <= height).or(options.last()),
+        Quality::Smallest => options.last(),
+    }?;
+    select_video(info, option.height, fps_class(Some(option.fps as f64)))
 }
 
 /// The best audio-only stream.
@@ -195,4 +208,13 @@ mod tests {
     fn combined_only_has_nothing_usable() {
         assert!(matches!(to_video_info(&info(COMBINED)), Err(EngineError::NoStream(_))));
     }
+
+    #[test] fn quality_best_takes_top_option() { assert_eq!(select_video_for(&info(SYNTH), Quality::Best).unwrap().format_id, "303"); }
+    #[test] fn quality_cap_takes_best_at_or_below() {
+        assert_eq!(select_video_for(&info(SYNTH), Quality::UpTo { height: 1080 }).unwrap().format_id, "303");
+        assert_eq!(select_video_for(&info(SYNTH), Quality::UpTo { height: 720 }).unwrap().format_id, "298"); // 720p60
+    }
+    #[test] fn quality_cap_below_everything_falls_back_to_smallest() { assert_eq!(select_video_for(&info(SYNTH), Quality::UpTo { height: 480 }).unwrap().format_id, "247"); }
+    #[test] fn quality_smallest_prefers_lower_fps() { assert_eq!(select_video_for(&info(SYNTH), Quality::Smallest).unwrap().format_id, "247"); }
+    #[test] fn quality_none_when_no_video() { assert!(select_video_for(&info(COMBINED), Quality::Best).is_none()); }
 }
