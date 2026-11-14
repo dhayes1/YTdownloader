@@ -38,6 +38,8 @@ export function createLinkSubmitter(deps: LinkDeps) {
 
   // The submit token the open question belongs to; answers made after a clear or a new link are stale.
   let askToken = 0;
+  // True from the moment an answer is claimed until its add finishes, so a second click adds nothing.
+  let answering = false;
 
   function submit(raw: string): void {
     const before = getState();
@@ -56,6 +58,7 @@ export function createLinkSubmitter(deps: LinkDeps) {
         if (!current()) return; // cleared or superseded while reading
         if (probed.type === 'videoInPlaylist') {
           askToken = mine;
+          answering = false;
           dispatch({ type: 'linkAsk', url, info: probed.info, lookup: probed.lookup });
           return; // nothing is added until the user answers
         }
@@ -73,7 +76,8 @@ export function createLinkSubmitter(deps: LinkDeps) {
   /** Run one answer to the open question, if it is still the current one. */
   async function answer(add: (ask: NonNullable<State['ask']>) => Promise<unknown>, only?: (ask: NonNullable<State['ask']>) => boolean): Promise<void> {
     const ask = getState().ask;
-    if (!ask || token !== askToken || (only && !only(ask))) return;
+    if (!ask || answering || token !== askToken || (only && !only(ask))) return;
+    answering = true; // claimed before the first await
     const mine = token;
     try {
       await add(ask);
@@ -82,6 +86,8 @@ export function createLinkSubmitter(deps: LinkDeps) {
       dispatch({ type: 'linkRead', url: ask.url });
     } catch (err) {
       if (token === mine) dispatch({ type: 'linkFailed', url: ask.url, message: message(err) });
+    } finally {
+      if (token === mine) answering = false;
     }
   }
 

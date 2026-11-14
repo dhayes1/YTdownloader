@@ -169,3 +169,28 @@ test('a failed add after an answer shows the error', async () => {
   expect(t.get().linkError).toBe('nope');
   expect(t.get().ask).toBeUndefined();
 });
+
+test('two Whole playlist answers while the first add is pending add once', async () => {
+  const t = await asked({ type: 'found', playlist: pl });
+  let release: () => void = () => {};
+  t.api.addPlaylist.mockImplementationOnce(() => new Promise<number>((r) => (release = () => r(1))));
+  const first = t.link.answerWhole();
+  const second = t.link.answerWhole();
+  release();
+  await Promise.all([first, second]);
+  expect(t.api.addPlaylist).toHaveBeenCalledTimes(1);
+  expect(t.api.addVideo).not.toHaveBeenCalled();
+});
+
+test('Whole then Just this video while pending adds only the playlist', async () => {
+  const t = await asked({ type: 'found', playlist: pl });
+  let release: () => void = () => {};
+  t.api.addPlaylist.mockImplementationOnce(() => new Promise<number>((r) => (release = () => r(1))));
+  const first = t.link.answerWhole();
+  const second = t.link.answerJustVideo();
+  release();
+  await Promise.all([first, second]);
+  expect(t.api.addPlaylist).toHaveBeenCalledTimes(1);
+  expect(t.api.addVideo).not.toHaveBeenCalled();
+  expect(t.get().ask).toBeUndefined();
+});
