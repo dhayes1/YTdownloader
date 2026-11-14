@@ -22,11 +22,12 @@ function baseName(path: string): string {
 
 export function render(s: State, root: HTMLElement): void {
   const downloading = s.status === 'downloading';
+  const locked = downloading || s.status === 'starting'; // a job is starting or running
   const info = s.info;
 
   // URL box: locked during a download, so a paste can't start a second job.
   const url = el<HTMLInputElement>(root, 'url');
-  url.disabled = downloading;
+  url.disabled = locked;
 
   // Missing tools
   const tools = el(root, 'tools');
@@ -59,8 +60,8 @@ export function render(s: State, root: HTMLElement): void {
   const mp3Btn = el<HTMLButtonElement>(root, 'kind-mp3');
   videoBtn.setAttribute('aria-pressed', String(s.kind === 'video'));
   mp3Btn.setAttribute('aria-pressed', String(s.kind === 'mp3'));
-  videoBtn.disabled = downloading || !info || info.videoOptions.length === 0;
-  mp3Btn.disabled = downloading || !info || !info.hasAudio;
+  videoBtn.disabled = locked || !info || info.videoOptions.length === 0;
+  mp3Btn.disabled = locked || !info || !info.hasAudio;
 
   // Resolution list (video only)
   const quality = el<HTMLSelectElement>(root, 'quality');
@@ -77,10 +78,10 @@ export function render(s: State, root: HTMLElement): void {
   }
   quality.value = String(s.optionIndex);
   quality.hidden = s.kind !== 'video';
-  quality.disabled = downloading || options.length === 0;
+  quality.disabled = locked || options.length === 0;
 
   // Folder
-  el<HTMLButtonElement>(root, 'folder-btn').disabled = downloading;
+  el<HTMLButtonElement>(root, 'folder-btn').disabled = locked;
   const folder = el(root, 'folder');
   folder.textContent = s.folder;
   folder.title = s.folder;

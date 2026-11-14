@@ -27,10 +27,17 @@ pub fn command(program: &str) -> tokio::process::Command {
     cmd
 }
 
-/// Runs `yt-dlp -J --no-playlist <url>` and returns its JSON output.
+/// yt-dlp arguments for reading a video's info as JSON. `--flat-playlist` makes a pure playlist
+/// or channel link return at once (the engine then rejects it) instead of yt-dlp first
+/// extracting every video in it.
+pub fn probe_args(url: &str) -> [&str; 4] {
+    ["-J", "--no-playlist", "--flat-playlist", url]
+}
+
+/// Runs yt-dlp with `probe_args` and returns its JSON output.
 pub async fn run_ytdlp_probe(url: &str) -> Result<String, EngineError> {
     let output = command("yt-dlp")
-        .args(["-J", "--no-playlist", url])
+        .args(probe_args(url))
         .output()
         .await
         .map_err(|e| missing_or_io(e, "yt-dlp"))?;
@@ -130,6 +137,13 @@ mod tests {
 
     use std::path::Path;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn probe_args_exact() {
+        // --flat-playlist: a pure playlist/channel link returns at once (and is then rejected)
+        // instead of yt-dlp extracting every video first. It doesn't change single-video output.
+        assert_eq!(probe_args("U"), ["-J", "--no-playlist", "--flat-playlist", "U"]);
+    }
 
     #[test]
     fn merge_args_exact() {

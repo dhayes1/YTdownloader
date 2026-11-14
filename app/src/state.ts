@@ -3,7 +3,15 @@
 
 import type { DownloadJob, JobEvent, Phase, VideoInfo } from './types';
 
-export type Status = 'empty' | 'probing' | 'ready' | 'downloading' | 'done' | 'error' | 'toolsMissing';
+export type Status =
+  | 'empty'
+  | 'probing'
+  | 'ready'
+  | 'starting' // Download clicked, waiting for start_download's reply
+  | 'downloading'
+  | 'done'
+  | 'error'
+  | 'toolsMissing';
 
 export interface State {
   status: Status;
@@ -28,6 +36,7 @@ export type Action =
   | { type: 'probeFailed'; url: string; message: string }
   | { type: 'kindChanged'; kind: 'video' | 'mp3' }
   | { type: 'optionChanged'; index: number }
+  | { type: 'startRequested' }
   | { type: 'started'; jobId: number }
   | { type: 'startFailed'; message: string }
   | { type: 'jobEvent'; event: JobEvent };
@@ -46,6 +55,11 @@ function kindAvailable(info: VideoInfo, kind: 'video' | 'mp3'): boolean {
   return kind === 'video' ? info.videoOptions.length > 0 : info.hasAudio;
 }
 
+/** A job is starting or running: the link, type, and resolution are locked. */
+function busy(s: State): boolean {
+  return s.status === 'starting' || s.status === 'downloading';
+}
+
 /** Fields that describe a finished or running job, cleared when a new one starts. */
 const NO_JOB = { jobId: undefined, phase: undefined, percent: null, donePath: undefined, error: undefined };
 
@@ -62,7 +76,7 @@ export function reduce(s: State, a: Action): State {
       return { ...s, folder: a.folder };
 
     case 'urlPasted': {
-      if (s.status === 'downloading') return s; // one job at a time; finish or cancel first
+      if (busy(s)) return s; // one job at a time; finish or cancel first
       const url = a.url.trim();
       if (!url) return { ...s, ...NO_JOB, status: 'empty', url: '', info: undefined };
       return { ...s, ...NO_JOB, status: 'probing', url, info: undefined };
@@ -79,14 +93,18 @@ export function reduce(s: State, a: Action): State {
       return { ...s, status: 'error', error: a.message, info: undefined };
 
     case 'kindChanged':
-      if (s.status === 'downloading' || !s.info || !kindAvailable(s.info, a.kind)) return s;
+      if (busy(s) || !s.info || !kindAvailable(s.info, a.kind)) return s;
       return { ...s, kind: a.kind };
 
     case 'optionChanged': {
       const count = s.info?.videoOptions.length ?? 0;
-      if (s.status === 'downloading' || a.index < 0 || a.index >= count) return s;
+      if (busy(s) || a.index < 0 || a.index >= count) return s;
       return { ...s, optionIndex: a.index };
     }
+
+    case 'startRequested':
+      if (!canDownload(s)) return s;
+      return { ...s, ...NO_JOB, status: 'starting' };
 
     case 'started':
       return { ...s, ...NO_JOB, status: 'downloading', jobId: a.jobId, phase: 'probing' };

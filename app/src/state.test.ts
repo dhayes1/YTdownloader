@@ -164,6 +164,38 @@ test('cannot download while probing or downloading', () => {
   expect(canDownload(downloading())).toBe(false);
 });
 
+describe('while a start request is in flight', () => {
+  const starting = () => reduce(ready(), { type: 'startRequested' });
+
+  test('download is disabled, so a double-click sends one request', () => {
+    expect(starting().status).toBe('starting');
+    expect(canDownload(starting())).toBe(false);
+  });
+
+  test('paste is ignored', () => {
+    const s = reduce(starting(), { type: 'urlPasted', url: 'u9' });
+    expect(s.status).toBe('starting');
+    expect(s.url).toBe('u1');
+    expect(s.info).toEqual(SYNTH_INFO);
+  });
+
+  test('kind and option are locked', () => {
+    expect(reduce(starting(), { type: 'kindChanged', kind: 'mp3' }).kind).toBe('video');
+    expect(reduce(starting(), { type: 'optionChanged', index: 1 }).optionIndex).toBe(0);
+  });
+
+  test('started and startFailed resolve it', () => {
+    expect(reduce(starting(), { type: 'started', jobId: 1 }).status).toBe('downloading');
+    const failed = reduce(starting(), { type: 'startFailed', message: 'nope' });
+    expect(failed.status).toBe('error');
+    expect(failed.info).toEqual(SYNTH_INFO);
+  });
+
+  test('startRequested is ignored when a download is not allowed', () => {
+    expect(reduce(downloading(), { type: 'startRequested' }).status).toBe('downloading');
+  });
+});
+
 test('cannot download without a folder', () => {
   let s = reduce(initialState, { type: 'urlPasted', url: 'u1' });
   s = reduce(s, { type: 'probeOk', url: 'u1', info: SYNTH_INFO });

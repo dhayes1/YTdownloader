@@ -22,6 +22,11 @@ impl ActiveJob {
         Some(id)
     }
 
+    /// The running job's ID, if any.
+    pub fn current(&self) -> Option<JobId> {
+        *self.0.lock().unwrap()
+    }
+
     /// Frees the slot if `id` is the running job.
     pub fn finish(&self, id: JobId) {
         let mut slot = self.0.lock().unwrap();
@@ -35,6 +40,16 @@ impl ActiveJob {
 mod tests {
     use super::*;
     use engine::JobId;
+
+    #[test]
+    fn current_reports_the_running_job() {
+        let a = ActiveJob::default();
+        assert_eq!(a.current(), None);
+        a.begin(|| JobId(3));
+        assert_eq!(a.current(), Some(JobId(3)));
+        a.finish(JobId(3));
+        assert_eq!(a.current(), None);
+    }
 
     #[test]
     fn second_begin_is_refused() {

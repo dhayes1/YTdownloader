@@ -47,7 +47,7 @@ pub async fn download_ranged(
 
         let resp = tokio::select! {
             _ = cancel.cancelled() => return Err(EngineError::Cancelled),
-            r = req.send() => r.map_err(|e| EngineError::Http(e.to_string()))?,
+            r = req.send() => r.map_err(|e| EngineError::Http(e.without_url().to_string()))?,
         };
         let status = resp.status();
         if !status.is_success() {
@@ -84,7 +84,7 @@ pub async fn download_ranged(
             };
             match next {
                 None => break,
-                Some(Err(e)) => return Err(EngineError::Http(e.to_string())),
+                Some(Err(e)) => return Err(EngineError::Http(e.without_url().to_string())),
                 Some(Ok(bytes)) => {
                     file.write_all(&bytes).await?;
                     got += bytes.len() as u64;

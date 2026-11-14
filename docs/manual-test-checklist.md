@@ -32,3 +32,5 @@ Tick each box as it passes; note anything odd underneath it.
 - [ ] **Missing tool:** start the app with `deno` off PATH (e.g. temporarily rename `deno.exe`). The missing-tools panel lists Deno with its install command and Download stays disabled. Restore it afterwards.
 - [ ] **Dark mode:** switch Windows to dark mode — the app follows.
 - [ ] **Resize:** make the window larger and back to its minimum — the layout holds, nothing overlaps or scrolls sideways.
+- [ ] **Close during a download:** start a long video download, then close the window. The app takes a moment to exit, and afterwards no `.part` file or partial output is left in the folder, and no `ffmpeg.exe` is left running in Task Manager.
+- [ ] **Double-click Download:** double-click it quickly — exactly one download starts, with its progress bar and Cancel.

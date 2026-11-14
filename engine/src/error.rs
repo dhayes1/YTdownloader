@@ -69,7 +69,7 @@ impl EngineError {
             EngineError::NoStream(what) => {
                 format!("This video has no {what} stream the app can download.")
             }
-            EngineError::Http(detail) if detail.contains("403") => {
+            EngineError::Http(detail) if detail == "HTTP 403" => {
                 "YouTube refused the download. Try again in a moment; if it keeps happening, \
                  update yt-dlp by running `yt-dlp -U`."
                     .into()
@@ -103,6 +103,14 @@ mod tests {
         assert!(m.contains("YouTube refused"), "{m}");
         assert!(m.contains("yt-dlp -U"), "{m}");
         assert!(EngineError::Http("connection ended early".into()).user_message().contains("connection"));
+    }
+
+    #[test]
+    fn network_error_mentioning_403_is_still_a_connection_problem() {
+        // A dropped connection's text can contain digits like "403" (e.g. from a stream URL).
+        let m = EngineError::Http("error decoding response body: connection reset, clen=4031".into()).user_message();
+        assert!(m.contains("connection"), "{m}");
+        assert!(!m.contains("YouTube refused"), "{m}");
     }
 
     #[test]

@@ -35,9 +35,11 @@ function submitUrl(raw: string): void {
 
 async function startDownload(): Promise<void> {
   if (!canDownload(state)) return;
+  const job = buildJob(state);
+  dispatch({ type: 'startRequested' }); // disables Download, so a double-click sends one request
   starting = true;
   try {
-    const jobId = await api.startDownload(buildJob(state));
+    const jobId = await api.startDownload(job);
     dispatch({ type: 'started', jobId });
   } catch (err) {
     dispatch({ type: 'startFailed', message: message(err) });
