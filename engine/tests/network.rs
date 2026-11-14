@@ -1,14 +1,80 @@
 //! Real-video tests. They need the network, yt-dlp, ffmpeg, and Deno, so they're ignored by
 //! default. Run with:
 //!   $env:YTDL_TEST_URL="<url>"; cargo test -p engine --test network -- --ignored
+//! The playlist tests read `YTDL_TEST_PLAYLIST` instead:
+//!   $env:YTDL_TEST_PLAYLIST="<playlist url>"; cargo test -p engine --test network -- --ignored real_playlist real_two
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{DownloadJob, DownloadKind, Engine, JobEventKind, Probed, Quality};
+use engine::{
+    DownloadJob, DownloadKind, Engine, EntryState, JobEventKind, PlaylistInfo, Probed, Quality, Queue, QueueEvent,
+    QueueStatus, SystemBackend,
+};
 use tokio::sync::mpsc::unbounded_channel;
 
 fn test_url() -> String {
     std::env::var("YTDL_TEST_URL").expect("set YTDL_TEST_URL to a public video you may download")
+}
+
+fn test_playlist() -> String {
+    std::env::var("YTDL_TEST_PLAYLIST").expect("set YTDL_TEST_PLAYLIST to a public playlist you may download")
+}
+
+async fn probe_playlist() -> PlaylistInfo {
+    match Engine::new().probe(&test_playlist()).await.unwrap() {
+        Probed::Playlist { playlist } => playlist,
+        other => panic!("expected a playlist, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs network and yt-dlp"]
+async fn real_playlist_listing() {
+    let playlist = probe_playlist().await;
+    assert!(!playlist.entries.is_empty());
+}
+
+/// Queues the first two entries of a real playlist as MP3s.
+#[tokio::test]
+#[ignore = "needs network, yt-dlp, ffmpeg, and Deno"]
+async fn real_two_mp3_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut playlist = probe_playlist().await;
+    assert!(playlist.entries.len() >= 2, "the test playlist needs at least two entries");
+    playlist.entries.truncate(2);
+
+    let (tx, mut rx) = unbounded_channel();
+    let queue = Queue::new(Arc::new(SystemBackend::default()), tx);
+    queue.set_folder(dir.path().to_path_buf());
+    queue.set_choice(DownloadKind::Mp3);
+    queue.add_playlist(&playlist);
+    queue.start();
+
+    tokio::time::timeout(Duration::from_secs(600), async {
+        loop {
+            match rx.recv().await.expect("queue events ended") {
+                QueueEvent::Status { status: QueueStatus::Idle | QueueStatus::Paused } => return,
+                QueueEvent::State { id, state } => println!("{id:?}: {state:?}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("queue took over 10 minutes");
+
+    let entries = queue.entries();
+    assert_eq!(entries.len(), 2);
+    let sub = dir.path().join(engine::naming::sanitize_filename(&playlist.title));
+    for e in &entries {
+        let EntryState::Done { path } = &e.state else { panic!("expected Done, got {:?}", e.state) };
+        assert_eq!(path.parent().unwrap(), sub);
+        assert_eq!(path.extension().unwrap(), "mp3");
+        assert!(path.file_name().unwrap().to_string_lossy().starts_with(e.prefix.as_deref().unwrap()));
+        assert!(std::fs::metadata(path).unwrap().len() > 0);
+    }
+    let mp3s = std::fs::read_dir(&sub).unwrap().filter(|f| f.as_ref().unwrap().path().extension().is_some_and(|x| x == "mp3")).count();
+    assert_eq!(mp3s, 2);
 }
 
 #[tokio::test]

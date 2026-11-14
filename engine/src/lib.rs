@@ -6,6 +6,7 @@ pub mod download;
 pub mod error;
 pub mod job;
 pub mod naming;
+pub mod queue;
 pub mod select;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -15,6 +16,7 @@ pub mod ytdlp;
 
 pub use backend::{Backend, SystemBackend};
 pub use error::*;
+pub use queue::*;
 pub use tools::missing_tools;
 pub use types::*;
 
