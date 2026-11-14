@@ -374,3 +374,43 @@ test('choice change is stored', ...)
 - [ ] **Step 5: Update `docs/manual-test-checklist.md`** for V2: keep V1 items that still apply (tools panel, theme, resize, clear link, installed app, cancel cleanup) and add: real playlist downloads into its numbered folder; a Mix link shows the Mix message; a channel link shows the channel message; a private entry fails and the queue continues; Stop then Start resumes; ✕ on the running row continues with the next; ✕ on a group; Clear finished; quality change mid-queue affects only waiting rows; closing mid-queue leaves no `.part` and no `ffmpeg.exe`; `powercfg /requests` (in an admin PowerShell) lists the app while the queue runs and not after. README: one paragraph on the queue.
 - [ ] **Step 6: Verify** — `cd app; npm test; npx tsc --noEmit -p .; cd ..; cargo test --workspace`; then `cd app; npm run tauri dev` and walk the checklist with Donny. Expected: all automated tests pass; every checklist item checked.
 - [ ] **Step 7: Commit** — `"feat(ui): queue screen (layout A), wiring, V2 checklist"`
+
+---
+
+## Amendment tasks (spec §11)
+
+### Task 8: Engine — video-in-playlist probing, private-playlist message
+
+**Files:** Modify `engine/src/backend.rs`, `engine/src/tools.rs`, `engine/src/types.rs`, `engine/src/error.rs`, `engine/src/ytdlp.rs`, `engine/src/lib.rs`, `engine/src/testing.rs`; new fixtures in `engine/tests/fixtures/` as needed.
+
+**Interfaces:**
+- `Backend` gains `async fn probe_playlist_json(&self, url: &str) -> Result<String, EngineError>`. `SystemBackend` runs `yt-dlp -J --yes-playlist --flat-playlist <url>` via a new `playlist_probe_args(url) -> [&str; 4]` beside `probe_args`. `FakeBackend` gains `playlist_json: Option<&'static str>` (None → returns `json`).
+- `UnsupportedReason::PlaylistUnavailable`, message exactly: "This playlist is private or doesn't exist." `classify_ytdlp_error` maps stderr containing "The playlist does not exist" to it.
+- `types.rs`: `#[serde(tag = "type", rename_all = "camelCase")] enum PlaylistLookup { Found { playlist: PlaylistInfo }, Mix, Unavailable }`; `Probed` gains `VideoInPlaylist { info: VideoInfo, lookup: PlaylistLookup }`.
+- `Engine::probe(url)`: a URL with both a video id (`v=`) and a `list=` parameter → probe the video with `probe_json`; then if the list id starts with `RD` → `lookup: Mix` (no second probe); otherwise `probe_playlist_json`: a playlist result → `Found`; a video result, or `Unsupported(PlaylistUnavailable)` → `Unavailable`. All other URLs behave as before.
+
+- [ ] **Step 1: Failing tests:** `playlist_probe_args_exact` (`["-J","--yes-playlist","--flat-playlist","U"]`); `classify_playlist_does_not_exist` ("ERROR: [youtube:tab] PLx: YouTube said: The playlist does not exist." → `PlaylistUnavailable`); `probe_video_in_playlist_found`, `probe_video_in_playlist_mix` (and the playlist probe is not called), `probe_video_in_playlist_unavailable` (FakeBackend `json` = SYNTH video, `playlist_json` = FLAT / SYNTH); `probed_video_in_playlist_json_shape` (`{"type":"videoInPlaylist","info":{…},"lookup":{"type":"found","playlist":{…}}}`).
+- [ ] **Step 2: RED**, implement, **GREEN** — `cargo test --workspace`
+- [ ] **Step 3: Commit** — `"feat(engine): ask-about-playlist probing, private playlist message"`
+
+### Task 9: Frontend — playlist question, remembered quality
+
+**Files:** Modify `app/src/types.ts`, `app/src/state.ts`, `app/src/state.test.ts`, `app/src/link.ts`, `app/src/link.test.ts`, `app/src/view.ts`, `app/src/main.ts`, `app/src/api.ts`, `app/src/styles.css`, `app/index.html`; `app/src-tauri/src/commands.rs`, `app/src-tauri/src/settings.rs`, `app/src-tauri/src/lib.rs`.
+
+**Rules:**
+- Saved video quality: store key `videoQuality` (a `Quality`, default Best when missing or invalid). New command `get_video_quality() -> Quality`; `set_choice` also saves `videoQuality` whenever it receives a video choice. Test the resolve helper like `resolve_choice`.
+- `link.ts`: on `Probed.videoInPlaylist`, add nothing; dispatch `linkAsk { url, info, lookup }`. State gains `ask?: { url: string; info: VideoInfo; lookup: PlaylistLookup }`. **Whole playlist** (only when `lookup.type === 'found'`) → `add_playlist(lookup.playlist)` then `linkRead`; **Just this video** → `add_video(<the video's own URL: https://www.youtube.com/watch?v=<id> taken from the submitted URL>, info.title)` then `linkRead`; ✕/Esc → `linkCleared` (clears `ask`). The submit token guards these: a cleared ask never adds.
+- View: the question replaces the "Getting video info…" line, with the exact texts from spec §11.1 (Found: "This video is part of the playlist “<title>” (<N> videos)."; Mix: the Mix message; Unavailable: "This playlist is private or doesn't exist.").
+- Quality: state keeps `videoQuality` (loaded with `get_video_quality`); MP3 → Video restores it; choosing a quality updates it.
+- [ ] **Step 1: Failing tests:** reducer — `linkAsk` sets `ask` and `link` back to `'idle'`... (implementer's call on the exact link state, but Add/paste must work again after an ask is answered or cleared); clearing removes `ask`; MP3 → Video restores `videoQuality`. link.test.ts — whole playlist adds the playlist; just this video adds the plain watch URL; clear during an ask adds nothing; a Mix/Unavailable ask has no whole-playlist path. Rust — `resolve_video_quality` defaults to Best.
+- [ ] **Step 2: RED**, implement, **GREEN** — `npm test`, `npx tsc --noEmit -p .` zero errors, `cargo test --workspace`; smoke launch
+- [ ] **Step 3: Commit** — `"feat(ui): ask whole playlist or just this video; remember quality"`
+
+### Task 10: App — confirm before closing mid-queue
+
+**Files:** Modify `app/src-tauri/src/lib.rs` (+ a small pure helper and its tests).
+
+**Rules:** on the main window's `CloseRequested`, if any queue entry is Running or Waiting: `prevent_close`, then show a native dialog (tauri-plugin-dialog, from Rust) with the text "Downloads are in progress. Close anyway?" and buttons **Close** / **Keep downloading**. Close → run the existing exit cleanup (stop, wait ≤10 s, keep-awake off, exit). Keep downloading → nothing. Otherwise close immediately. Helper `pub fn needs_close_confirm(entries: &[QueueEntry]) -> bool`.
+- [ ] **Step 1: Failing tests:** `needs_close_confirm` — empty → false; only done/failed → false; any waiting → true; any running → true.
+- [ ] **Step 2: RED**, implement, **GREEN** — `cargo test --workspace`; smoke launch
+- [ ] **Step 3: Commit** — `"feat(app): confirm before closing with downloads in progress"`

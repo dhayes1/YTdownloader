@@ -280,3 +280,39 @@ enforces waits like `available_at`. One at a time is the gentler choice, and it 
 | YouTube throttles or blocks a long run of downloads | One at a time, with the `available_at` wait per video. If 403s show up mid-playlist, add a short pause between videos (builder may add a small fixed gap). Approach #1 from V1 (yt-dlp downloads) remains the fallback |
 | Flat-playlist output format changes in a yt-dlp update | Parse only what's needed (title, entries' id/url/title). Keep a saved fixture and the ignored network test to catch it |
 | Keep-awake left on after a crash | Windows clears an execution-state request when the process exits, so a crash can't leave it on |
+
+## 11. Amendment after manual testing (2026-11-13)
+
+Donny's walk-through showed that the rule "a `watch?v=…&list=…` link adds just that video" (§5.1)
+doesn't match how he copies links: YouTube gives that form while a playlist is playing. These
+changes supersede the matching parts of §5.1, §5.2 and §5.6.
+
+### 11.1 A link to a video inside a playlist asks
+
+Decided by Donny: a `watch?v=…&list=…` link asks whether to add the whole playlist or just the video.
+
+- **Regular playlist:** the link box shows "This video is part of the playlist “<title>” (<N>
+  videos)." with **Whole playlist** and **Just this video** buttons. ✕/Esc cancels without adding.
+- **YouTube Mix** (`list=RD…`) **(Claude's call)**: shows the Mix message ("That's a YouTube Mix,
+  which changes every time. Paste a regular playlist or single videos instead.") with a **Just this
+  video** button.
+- **Private or missing playlist** **(Claude's call)**: shows "This playlist is private or doesn't
+  exist." with a **Just this video** button. yt-dlp signals this by falling back to the single video
+  ("Unable to recognize playlist").
+- A plain `watch?v=…` link adds the video, and a `playlist?list=…` link adds the playlist, as before.
+- A private or missing `playlist?list=…` link shows "This playlist is private or doesn't exist."
+  instead of yt-dlp's raw text ("YouTube said: The playlist does not exist.").
+- Paste still adds right away (Donny). Enter and Add remain for typed links. When the question
+  appears, nothing is added until a button is chosen.
+
+### 11.2 Video quality is remembered
+
+The last video quality sticks when switching MP3 → Video, and across restarts (saved in
+`settings.json` alongside `choice`).
+
+### 11.3 Closing asks first
+
+Decided by Donny, replacing §5.6's "no prompt": if any video is downloading or waiting, closing the
+window shows a standard Windows dialog, "Downloads are in progress. Close anyway?", with **Close** and
+**Keep downloading** **(Claude's call: native dialog)**. Close then runs §5.6's cleanup. With nothing
+downloading or waiting, the app closes at once.
