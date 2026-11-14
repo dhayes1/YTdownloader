@@ -162,3 +162,33 @@ async fn real_mp3_download() {
         other => panic!("expected Done, got {other:?}"),
     }
 }
+
+/// Throwaway check of the three kinds of `watch?v=...&list=...` links.
+#[tokio::test]
+#[ignore = "needs network and yt-dlp"]
+async fn real_video_in_playlist_lookups() {
+    use engine::PlaylistLookup;
+    let engine = Engine::new();
+    let regular = "https://www.youtube.com/watch?v=x3RK6U8nvPs&list=PL4kXoZZASRgs8_19aGso98561fkl8Slmk";
+    let private = "https://www.youtube.com/watch?v=mwcOKX7PaRg&list=PLH0glPyGJz0EOpz04H0cQ4l_xIBaW042K&pp=sAgC";
+    let mix = "https://www.youtube.com/watch?v=VWYdlnKqByQ&list=RDVWYdlnKqByQ&start_radio=1";
+
+    match engine.probe(regular).await.unwrap() {
+        Probed::VideoInPlaylist { lookup: PlaylistLookup::Found { playlist }, .. } => {
+            assert!(!playlist.entries.is_empty())
+        }
+        other => panic!("regular: {other:?}"),
+    }
+    // Donny's "private" example turned out to be listable by yt-dlp (no sign-in needed), so this
+    // only reports what it found.
+    let r = engine.probe(private).await.unwrap();
+    match &r {
+        Probed::VideoInPlaylist { lookup: PlaylistLookup::Found { playlist }, .. } => {
+            println!("private example: Found, {} entries", playlist.entries.len())
+        }
+        Probed::VideoInPlaylist { lookup, .. } => println!("private example: {lookup:?}"),
+        other => panic!("private: {other:?}"),
+    }
+    let r = engine.probe(mix).await.unwrap();
+    assert!(matches!(r, Probed::VideoInPlaylist { lookup: PlaylistLookup::Mix, .. }), "mix: {r:?}");
+}

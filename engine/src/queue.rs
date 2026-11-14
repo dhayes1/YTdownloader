@@ -447,6 +447,9 @@ mod tests {
         async fn probe_json(&self, url: &str) -> Result<String, EngineError> {
             self.inner.probe_json(url).await
         }
+        async fn probe_playlist_json(&self, url: &str) -> Result<String, EngineError> {
+            self.inner.probe_playlist_json(url).await
+        }
         async fn download(
             &self,
             fmt: &RawFormat,

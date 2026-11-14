@@ -34,10 +34,24 @@ pub fn probe_args(url: &str) -> [&str; 4] {
     ["-J", "--no-playlist", "--flat-playlist", url]
 }
 
+/// yt-dlp arguments for listing a playlist (flat: entries only, no per-video extraction).
+pub fn playlist_probe_args(url: &str) -> [&str; 4] {
+    ["-J", "--yes-playlist", "--flat-playlist", url]
+}
+
 /// Runs yt-dlp with `probe_args` and returns its JSON output.
 pub async fn run_ytdlp_probe(url: &str) -> Result<String, EngineError> {
+    run_ytdlp_json(probe_args(url)).await
+}
+
+/// Runs yt-dlp with `playlist_probe_args` and returns its JSON output.
+pub async fn run_ytdlp_playlist_probe(url: &str) -> Result<String, EngineError> {
+    run_ytdlp_json(playlist_probe_args(url)).await
+}
+
+async fn run_ytdlp_json(args: [&str; 4]) -> Result<String, EngineError> {
     let output = command("yt-dlp")
-        .args(probe_args(url))
+        .args(args)
         .output()
         .await
         .map_err(|e| missing_or_io(e, "yt-dlp"))?;
@@ -143,6 +157,11 @@ mod tests {
         // --flat-playlist: a pure playlist/channel link returns at once (and is then rejected)
         // instead of yt-dlp extracting every video first. It doesn't change single-video output.
         assert_eq!(probe_args("U"), ["-J", "--no-playlist", "--flat-playlist", "U"]);
+    }
+
+    #[test]
+    fn playlist_probe_args_exact() {
+        assert_eq!(playlist_probe_args("U"), ["-J", "--yes-playlist", "--flat-playlist", "U"]);
     }
 
     #[test]

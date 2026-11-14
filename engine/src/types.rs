@@ -39,6 +39,18 @@ pub struct PlaylistInfo {
 pub enum Probed {
     Video { info: VideoInfo },
     Playlist { playlist: PlaylistInfo },
+    /// A `watch?v=...&list=...` link: the video, plus what looking up its playlist found, so the
+    /// UI can ask whether to download the whole playlist or just the video.
+    VideoInPlaylist { info: VideoInfo, lookup: PlaylistLookup },
+}
+
+/// What looking up the playlist behind a `watch?v=...&list=...` link found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum PlaylistLookup {
+    Found { playlist: PlaylistInfo },
+    Mix,
+    Unavailable,
 }
 
 /// One entry in the resolution list, for example "1080p60".
@@ -172,5 +184,22 @@ mod tests {
         let j = serde_json::to_value(&v).unwrap();
         assert_eq!(j["type"], "video");
         assert_eq!(j["info"]["title"], "V");
+    }
+
+    #[test]
+    fn probed_video_in_playlist_json_shape() {
+        let info = VideoInfo { title: "V".into(), duration_secs: None, thumbnail_url: None, video_options: vec![], has_audio: true };
+        let p = Probed::VideoInPlaylist {
+            info,
+            lookup: PlaylistLookup::Found {
+                playlist: PlaylistInfo { title: "T".into(), entries: vec![PlaylistEntry { url: "u".into(), title: "e".into(), index: 1 }] },
+            },
+        };
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["type"], "videoInPlaylist");
+        assert_eq!(j["info"]["title"], "V");
+        assert_eq!(j["lookup"], serde_json::json!({"type":"found","playlist":{"title":"T","entries":[{"url":"u","title":"e","index":1}]}}));
+        assert_eq!(serde_json::to_value(PlaylistLookup::Mix).unwrap(), serde_json::json!({"type":"mix"}));
+        assert_eq!(serde_json::to_value(PlaylistLookup::Unavailable).unwrap(), serde_json::json!({"type":"unavailable"}));
     }
 }

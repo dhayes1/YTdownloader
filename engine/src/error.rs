@@ -13,6 +13,7 @@ pub enum UnsupportedReason {
     Live,
     Channel,
     Mix,
+    PlaylistUnavailable,
 }
 
 /// An engine error. `Display` (from `#[error]`) is the technical text for logs;
@@ -62,6 +63,9 @@ impl EngineError {
                 }
                 UnsupportedReason::Channel => {
                     "That's a channel link. Paste a playlist or video link instead.".into()
+                }
+                UnsupportedReason::PlaylistUnavailable => {
+                    "This playlist is private or doesn't exist.".into()
                 }
                 UnsupportedReason::Mix => "That's a YouTube Mix, which changes every time. \
                      Paste a regular playlist or single videos instead."
@@ -135,5 +139,6 @@ mod tests {
             .contains("age-restricted"));
     }
 
+    #[test] fn playlist_unavailable_message_is_exact() { assert_eq!(EngineError::Unsupported(UnsupportedReason::PlaylistUnavailable).user_message(), "This playlist is private or doesn't exist."); }
     #[test] fn mix_message_is_exact() { assert_eq!(EngineError::Unsupported(UnsupportedReason::Mix).user_message(), "That's a YouTube Mix, which changes every time. Paste a regular playlist or single videos instead."); }
 }

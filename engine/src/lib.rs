@@ -27,6 +27,20 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
+/// The `v` and `list` query parameters of a URL, when it has both and both are non-empty.
+fn video_and_list(url: &str) -> Option<(String, String)> {
+    let query = url.split('#').next()?.split_once('?')?.1;
+    let (mut video, mut list) = (None, None);
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("v", val)) if !val.is_empty() => video = Some(val.to_string()),
+            Some(("list", val)) if !val.is_empty() => list = Some(val.to_string()),
+            _ => {}
+        }
+    }
+    Some((video?, list?))
+}
+
 /// The engine API the app uses: probe a URL, start a job, cancel a job.
 /// Every job gets its own ID, so a V2 queue can run several through the same `start`.
 pub struct Engine<B: Backend = SystemBackend> {
@@ -59,7 +73,23 @@ impl<B: Backend> Engine<B> {
     /// Reads a video's title, duration, thumbnail, and resolution list, or a playlist's entries.
     pub async fn probe(&self, url: &str) -> Result<Probed, EngineError> {
         let json = self.backend.probe_json(url).await?;
-        select::to_probed(&ytdlp::parse_info(&json)?)
+        let probed = select::to_probed(&ytdlp::parse_info(&json)?)?;
+        let (Some((_, list)), Probed::Video { info }) = (video_and_list(url), &probed) else {
+            return Ok(probed);
+        };
+        let lookup = if list.starts_with("RD") {
+            PlaylistLookup::Mix
+        } else {
+            match self.backend.probe_playlist_json(url).await {
+                Ok(json) => match select::to_probed(&ytdlp::parse_info(&json)?)? {
+                    Probed::Playlist { playlist } => PlaylistLookup::Found { playlist },
+                    _ => PlaylistLookup::Unavailable,
+                },
+                Err(EngineError::Unsupported(UnsupportedReason::PlaylistUnavailable)) => PlaylistLookup::Unavailable,
+                Err(e) => return Err(e),
+            }
+        };
+        Ok(Probed::VideoInPlaylist { info: info.clone(), lookup })
     }
 
     /// Starts `job` in the background and returns its ID. Events arrive on `events`.
@@ -83,5 +113,65 @@ impl<B: Backend> Engine<B> {
         if let Some(token) = self.running.lock().unwrap().get(&id) {
             token.cancel();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{FakeBackend, SYNTH};
+    use std::sync::atomic::Ordering;
+
+    const FLAT: &str = include_str!("../tests/fixtures/flat_playlist.json");
+
+    const REGULAR: &str = "https://www.youtube.com/watch?v=x3RK6U8nvPs&list=PL4kXoZZASRgs8_19aGso98561fkl8Slmk";
+    const PRIVATE: &str = "https://www.youtube.com/watch?v=mwcOKX7PaRg&list=PLH0glPyGJz0EOpz04H0cQ4l_xIBaW042K&pp=sAgC";
+    const MIX: &str = "https://www.youtube.com/watch?v=VWYdlnKqByQ&list=RDVWYdlnKqByQ&start_radio=1";
+
+    #[test]
+    fn video_and_list_ids() {
+        assert_eq!(video_and_list(REGULAR), Some(("x3RK6U8nvPs".into(), "PL4kXoZZASRgs8_19aGso98561fkl8Slmk".into())));
+        assert_eq!(video_and_list(PRIVATE), Some(("mwcOKX7PaRg".into(), "PLH0glPyGJz0EOpz04H0cQ4l_xIBaW042K".into())));
+        assert_eq!(video_and_list(MIX), Some(("VWYdlnKqByQ".into(), "RDVWYdlnKqByQ".into())));
+        assert_eq!(video_and_list("https://www.youtube.com/watch?v=abc"), None);
+        assert_eq!(video_and_list("https://www.youtube.com/playlist?list=PLx"), None);
+        assert_eq!(video_and_list("https://www.youtube.com/watch?pv=abc&xlist=PLx"), None);
+    }
+
+    #[tokio::test]
+    async fn probe_video_in_playlist_found() {
+        let fake = FakeBackend { json: SYNTH, playlist_json: Some(FLAT), ..FakeBackend::new() };
+        match Engine::with_backend(fake).probe(REGULAR).await.unwrap() {
+            Probed::VideoInPlaylist { lookup: PlaylistLookup::Found { playlist }, .. } => {
+                assert!(!playlist.entries.is_empty())
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_video_in_playlist_mix() {
+        let fake = FakeBackend { json: SYNTH, playlist_json: Some(FLAT), ..FakeBackend::new() };
+        let engine = Engine::with_backend(fake);
+        let r = engine.probe(MIX).await.unwrap();
+        assert!(matches!(r, Probed::VideoInPlaylist { lookup: PlaylistLookup::Mix, .. }), "got {r:?}");
+        assert_eq!(engine.backend.playlist_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn probe_video_in_playlist_unavailable() {
+        // A video result for the playlist probe means the list isn't a real playlist.
+        let fake = FakeBackend { json: SYNTH, playlist_json: Some(SYNTH), ..FakeBackend::new() };
+        let r = Engine::with_backend(fake).probe(PRIVATE).await.unwrap();
+        assert!(matches!(r, Probed::VideoInPlaylist { lookup: PlaylistLookup::Unavailable, .. }), "got {r:?}");
+    }
+
+    #[tokio::test]
+    async fn probe_plain_video_skips_playlist_probe() {
+        let fake = FakeBackend { json: SYNTH, playlist_json: Some(FLAT), ..FakeBackend::new() };
+        let engine = Engine::with_backend(fake);
+        let r = engine.probe("https://www.youtube.com/watch?v=abc").await.unwrap();
+        assert!(matches!(r, Probed::Video { .. }));
+        assert_eq!(engine.backend.playlist_calls.load(Ordering::SeqCst), 0);
     }
 }

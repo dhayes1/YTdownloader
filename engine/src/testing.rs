@@ -24,6 +24,8 @@ pub(crate) enum Stage {
 /// Stands in for yt-dlp, the network, and ffmpeg.
 pub(crate) struct FakeBackend {
     pub(crate) json: &'static str,
+    /// What the playlist probe returns; `None` means `json`.
+    pub(crate) playlist_json: Option<&'static str>,
     /// Write the file, then wait for Cancel.
     pub(crate) block_in: Option<Stage>,
     /// Fail with HTTP 403.
@@ -31,16 +33,19 @@ pub(crate) struct FakeBackend {
     /// Probing one of these URLs fails as a private video; every other URL returns `json`.
     pub(crate) private_urls: HashSet<String>,
     pub(crate) download_calls: AtomicUsize,
+    pub(crate) playlist_calls: AtomicUsize,
 }
 
 impl FakeBackend {
     pub(crate) fn new() -> Self {
         Self {
             json: SYNTH,
+            playlist_json: None,
             block_in: None,
             fail_in: None,
             private_urls: HashSet::new(),
             download_calls: AtomicUsize::new(0),
+            playlist_calls: AtomicUsize::new(0),
         }
     }
     pub(crate) fn blocking(stage: Stage) -> Self {
@@ -66,6 +71,11 @@ impl Backend for FakeBackend {
             return Err(EngineError::Unsupported(UnsupportedReason::Private));
         }
         Ok(self.json.to_string())
+    }
+
+    async fn probe_playlist_json(&self, _url: &str) -> Result<String, EngineError> {
+        self.playlist_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.playlist_json.unwrap_or(self.json).to_string())
     }
 
     async fn download(

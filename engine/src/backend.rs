@@ -9,13 +9,16 @@ use tokio_util::sync::CancellationToken;
 
 use crate::download::{download_ranged, ProgressFn, CHUNK_SIZE};
 use crate::error::EngineError;
-use crate::tools::{run_ffmpeg, run_ytdlp_probe};
+use crate::tools::{run_ffmpeg, run_ytdlp_playlist_probe, run_ytdlp_probe};
 use crate::ytdlp::RawFormat;
 
 #[async_trait]
 pub trait Backend: Send + Sync + 'static {
     /// The raw `yt-dlp -J` JSON for `url`.
     async fn probe_json(&self, url: &str) -> Result<String, EngineError>;
+
+    /// The raw `yt-dlp -J --yes-playlist --flat-playlist` JSON for `url`.
+    async fn probe_playlist_json(&self, url: &str) -> Result<String, EngineError>;
 
     /// Downloads one stream into `dest`.
     async fn download(
@@ -40,6 +43,10 @@ pub struct SystemBackend {
 impl Backend for SystemBackend {
     async fn probe_json(&self, url: &str) -> Result<String, EngineError> {
         run_ytdlp_probe(url).await
+    }
+
+    async fn probe_playlist_json(&self, url: &str) -> Result<String, EngineError> {
+        run_ytdlp_playlist_probe(url).await
     }
 
     async fn download(

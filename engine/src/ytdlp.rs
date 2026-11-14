@@ -85,6 +85,9 @@ pub fn classify_ytdlp_error(stderr: &str) -> EngineError {
     if lower.contains("private video") {
         return EngineError::Unsupported(UnsupportedReason::Private);
     }
+    if lower.contains("the playlist does not exist") {
+        return EngineError::Unsupported(UnsupportedReason::PlaylistUnavailable);
+    }
     if lower.contains("members-only") || lower.contains("join this channel") {
         return EngineError::Unsupported(UnsupportedReason::MembersOnly);
     }
@@ -150,6 +153,14 @@ mod tests {
         assert!(matches!(
             classify_ytdlp_error("ERROR: [youtube] abc: Private video. Sign in if you've been granted access to this video"),
             EngineError::Unsupported(UnsupportedReason::Private)
+        ));
+    }
+
+    #[test]
+    fn classify_playlist_does_not_exist() {
+        assert!(matches!(
+            classify_ytdlp_error("ERROR: [youtube:tab] PLx: YouTube said: The playlist does not exist."),
+            EngineError::Unsupported(UnsupportedReason::PlaylistUnavailable)
         ));
     }
 
